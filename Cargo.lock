@@ -858,6 +858,7 @@ version = "0.1.0"
 dependencies = [
  "cairn-core",
  "dpi",
+ "euclid",
  "servo",
  "slint",
  "slint-build",
@@ -6810,6 +6811,7 @@ dependencies = [
  "servo-config",
  "servo-constellation",
  "servo-constellation-traits",
+ "servo-default-resources",
  "servo-devtools",
  "servo-devtools-traits",
  "servo-embedder-traits",
@@ -7062,6 +7064,15 @@ dependencies = [
  "uuid 1.29.0",
  "webrender_api",
  "zeroize",
+]
+
+[[package]]
+name = "servo-default-resources"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0a9b9f4014b5632cbe1e0289de744ee63c33dce9dd142c23cd964904aa8214f"
+dependencies = [
+ "servo-embedder-traits",
 ]
 
 [[package]]
