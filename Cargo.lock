@@ -860,10 +860,12 @@ dependencies = [
  "dpi",
  "euclid",
  "lz4_flex",
+ "rustls",
  "servo",
  "slint",
  "slint-build",
  "url",
+ "winit",
  "zstd 0.13.3",
 ]
 
