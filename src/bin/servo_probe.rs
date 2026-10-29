@@ -10,9 +10,12 @@ fn main() {
     let out = args.next().unwrap_or_else(|| "/tmp/probe.png".into());
     let (w, h) = (1280u32, 800u32);
     let servo = ServoBuilder::default().build();
-    let tabs: Vec<_> = url.split(',').map(|u| {
-        let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("ctx"));
+    let shared = std::env::var("SHARED").is_ok();
+    let shared_ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("ctx"));
+    let tabs: Vec<_> = url.split(',').enumerate().map(|(i, u)| {
+        let ctx = if shared { shared_ctx.clone() } else { Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("ctx")) };
         let wv = WebViewBuilder::new(&servo, ctx.clone()).url(url::Url::parse(u).expect("url")).build();
+        if shared && i > 0 { wv.hide(); }
         (wv, ctx)
     }).collect();
     let (wv, ctx) = (&tabs[0].0, &tabs[0].1);
@@ -20,7 +23,7 @@ fn main() {
     let mut last = String::new();
     while start.elapsed() < Duration::from_secs(secs) {
         servo.spin_event_loop();
-        for t in &tabs { t.0.paint(); }
+        if shared { tabs[0].0.paint(); } else { for t in &tabs { t.0.paint(); } }
         let s = format!("{:?} title={:?} url={:?}", wv.load_status(), wv.page_title(), wv.url().map(|u| u.to_string()));
         if s != last {
             eprintln!("[{:>5.1}s] {s}", start.elapsed().as_secs_f32());
@@ -28,6 +31,7 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(16));
     }
+    for (i, t) in tabs.iter().enumerate() { eprintln!("tab{i}: {:?} title={:?}", t.0.load_status(), t.0.page_title()); }
     if let Ok(st) = std::fs::read_to_string("/proc/self/status") {
         for l in st.lines().filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM") || l.starts_with("Threads") || l.starts_with("RssAnon")) { eprintln!("{l}"); }
     }
