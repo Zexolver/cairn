@@ -1,0 +1,13 @@
+[package]
+name = "cairn-core"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+description = "Platform-independent core of Cairn: containers, tabs, ad blocking, filter lists, URL handling"
+
+[dependencies]
+adblock = { version = "0.13", default-features = false, features = ["content-blocking", "embedded-domain-resolver", "full-regex-handling"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+thiserror = "2"

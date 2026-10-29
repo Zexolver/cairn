@@ -1,0 +1,29 @@
+[workspace]
+members = ["crates/cairn-core", "."]
+
+[package]
+name = "cairn"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+description = "Lightweight cross-platform browser: Slint UI, Servo engine, container-per-process tabs"
+
+[features]
+default = []
+# Real Servo engine (huge build). Without it a stub engine is used so the UI can be developed quickly.
+servo = ["dep:servo", "dep:dpi", "dep:url"]
+
+[dependencies]
+cairn-core = { path = "crates/cairn-core" }
+slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "compat-1-2"] }
+servo = { version = "0.7", optional = true, default-features = false }
+dpi = { version = "0.1", optional = true }
+url = { version = "2", optional = true }
+
+[build-dependencies]
+slint-build = "1.17"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = true
