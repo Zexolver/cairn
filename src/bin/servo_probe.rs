@@ -24,6 +24,9 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(16));
     }
+    if let Ok(st) = std::fs::read_to_string("/proc/self/status") {
+        for l in st.lines().filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM") || l.starts_with("Threads") || l.starts_with("RssAnon")) { eprintln!("{l}"); }
+    }
     match ctx.read_to_image(DeviceIntRect::from_size(euclid::Size2D::new(w as i32, h as i32))) {
         Some(img) => { img.save(&out).expect("save"); eprintln!("saved {out}"); }
         None => eprintln!("no image"),
