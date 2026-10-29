@@ -1,5 +1,5 @@
 //! Probe: load a URL in Servo (software rendering) and save a screenshot.
-//! usage: servo_probe <url> <seconds> <out.png>
+//! usage: servo_probe <url[,url...]> <seconds> <out.png>   (several urls = several tabs in one engine)
 use servo::{DeviceIntRect, ServoBuilder, SoftwareRenderingContext, WebViewBuilder, RenderingContext};
 use std::{rc::Rc, time::{Duration, Instant}};
 
@@ -9,14 +9,18 @@ fn main() {
     let secs: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(15);
     let out = args.next().unwrap_or_else(|| "/tmp/probe.png".into());
     let (w, h) = (1280u32, 800u32);
-    let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("ctx"));
     let servo = ServoBuilder::default().build();
-    let wv = WebViewBuilder::new(&servo, ctx.clone()).url(url::Url::parse(&url).expect("url")).build();
+    let tabs: Vec<_> = url.split(',').map(|u| {
+        let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("ctx"));
+        let wv = WebViewBuilder::new(&servo, ctx.clone()).url(url::Url::parse(u).expect("url")).build();
+        (wv, ctx)
+    }).collect();
+    let (wv, ctx) = (&tabs[0].0, &tabs[0].1);
     let start = Instant::now();
     let mut last = String::new();
     while start.elapsed() < Duration::from_secs(secs) {
         servo.spin_event_loop();
-        wv.paint();
+        for t in &tabs { t.0.paint(); }
         let s = format!("{:?} title={:?} url={:?}", wv.load_status(), wv.page_title(), wv.url().map(|u| u.to_string()));
         if s != last {
             eprintln!("[{:>5.1}s] {s}", start.elapsed().as_secs_f32());
