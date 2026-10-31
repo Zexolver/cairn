@@ -13,6 +13,11 @@ default = []
 # Real Servo engine (huge build). Without it a stub engine is used so the UI can be developed quickly.
 servo = ["dep:servo", "dep:winit", "dep:rustls", "dep:dpi", "dep:url", "dep:euclid", "dep:zstd", "dep:lz4_flex"]
 
+# Extra Servo web features, for RAM/compat experiments
+webfx = ["servo", "servo/webcrypto", "servo/webgl", "servo/brotli-compression-stream", "servo/clipboard"]
+webfx-gpu = ["webfx", "servo/webgpu"]
+webfx-xr = ["webfx", "servo/webxr"]
+
 [dependencies]
 cairn-core = { path = "crates/cairn-core" }
 slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "compat-1-2"] }
@@ -46,3 +51,6 @@ required-features = ["servo"]
 [[bin]]
 name = "cairn"
 path = "src/main.rs"
+
+[patch.crates-io]
+servo-script = { path = "vendor/servo-script" }
