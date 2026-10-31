@@ -129,6 +129,10 @@ struct App {
     state: Option<Running>,
 }
 
+fn prefs() -> servo::Preferences {
+    servo::Preferences { dom_intersection_observer_enabled: true, dom_visual_viewport_enabled: true, ..Default::default() }
+}
+
 fn opts() -> Opts {
     Opts { config_dir: Some(std::env::current_dir().unwrap().join("cairn-probe-data")), ..Opts::default() }
 }
@@ -150,7 +154,7 @@ impl ApplicationHandler<()> for App {
         };
         let _ = ctx.make_current();
         log("RENDER MODE: window rendering context created (GPU if the driver is hardware; see glxinfo/eglinfo lines above)");
-        let servo = ServoBuilder::default().opts(opts()).event_loop_waker(Box::new(self.waker.clone())).build();
+        let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).event_loop_waker(Box::new(self.waker.clone())).build();
         let scale = window.scale_factor() as f32;
         let delegate = Rc::new(Delegate { window: Some(window.clone()) });
         let tabs: Vec<WebView> = self
@@ -243,7 +247,7 @@ impl App {
 fn software_fallback(urls: &[String], secs: u64) {
     log("RENDER MODE: SOFTWARE (CPU) fallback");
     let (w, h) = (1280u32, 800u32);
-    let servo = ServoBuilder::default().opts(opts()).build();
+    let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).build();
     let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("software ctx"));
     let tabs: RefCell<Vec<WebView>> = RefCell::new(
         urls.iter()
