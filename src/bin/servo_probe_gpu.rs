@@ -307,31 +307,64 @@ fn software_fallback(urls: &[String], secs: u64) {
             })
             .collect(),
     );
+    // STEPS="wait:5;click:x,y;type:text;key:Enter;scroll:dy;shot:name.png;js:expr" (';'-separated), run on tab 0
+    let steps: Vec<String> = std::env::var("STEPS").map(|s| s.split(';').map(|x| x.trim().to_string()).collect()).unwrap_or_default();
+    let mut step = 0usize;
+    let mut wait_until = Instant::now();
     let t = Instant::now();
-    let mut did_input = false;
+    let limit = Duration::from_secs(if steps.is_empty() { secs.min(60) } else { secs });
     let mut last = Instant::now() - Duration::from_secs(10);
-    while t.elapsed() < Duration::from_secs(secs.min(60)) {
+    let shot = |name: &str| {
+        if let Some(img) = ctx.read_to_image(DeviceIntRect::from_size(euclid::Size2D::new(w as i32, h as i32))) {
+            let _ = img.save(name);
+        }
+    };
+    let click = |wv: &WebView, x: f32, y: f32| {
+        let p: servo::WebViewPoint = servo::DevicePoint::new(x, y).into();
+        wv.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(p)));
+        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Down, MouseButton::Primary, p)));
+        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Up, MouseButton::Primary, p)));
+    };
+    let key = |wv: &WebView, k: servo::Key, code: servo::Code| {
+        for st in [servo::KeyState::Down, servo::KeyState::Up] {
+            wv.notify_input_event(InputEvent::Keyboard(servo::KeyboardEvent::new_without_event(
+                st, k.clone(), code, servo::Location::Standard, servo::Modifiers::empty(), false, false,
+            )));
+        }
+    };
+    while t.elapsed() < limit {
         servo.spin_event_loop();
         tabs.borrow()[0].paint();
-        if !did_input && t.elapsed() > Duration::from_secs(secs / 2) {
-            did_input = true;
+        if step < steps.len() && Instant::now() >= wait_until {
+            let s = steps[step].clone();
+            step += 1;
+            let (cmd, arg) = s.split_once(':').unwrap_or((s.as_str(), ""));
             let wv = &tabs.borrow()[0];
-            if let Ok(c) = std::env::var("CLICK") {
-                let v: Vec<f32> = c.split(',').filter_map(|x| x.parse().ok()).collect();
-                let p: servo::WebViewPoint = servo::DevicePoint::new(v[0], v[1]).into();
-                wv.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(p)));
-                wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Down, MouseButton::Primary, p)));
-                wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Up, MouseButton::Primary, p)));
-                log(format!("TEST clicked at {c}"));
+            log(format!("STEP {step}/{} {s}", steps.len()));
+            match cmd {
+                "wait" => wait_until = Instant::now() + Duration::from_secs_f32(arg.parse().unwrap_or(1.0)),
+                "click" => {
+                    let v: Vec<f32> = arg.split(',').filter_map(|x| x.parse().ok()).collect();
+                    click(wv, v[0], v[1]);
+                }
+                "scroll" => {
+                    wv.notify_input_event(InputEvent::Wheel(WheelEvent::new(
+                        WheelDelta { x: 0.0, y: arg.parse().unwrap_or(0.0), z: 0.0, mode: WheelMode::DeltaPixel },
+                        servo::DevicePoint::new(600.0, 400.0).into(),
+                    )));
+                }
+                "type" => {
+                    for c in arg.chars() {
+                        key(wv, servo::Key::Character(c.to_string()), servo::Code::Unidentified);
+                    }
+                }
+                "key" => key(wv, servo::Key::Named(match arg { "Enter" => servo::NamedKey::Enter, "Tab" => servo::NamedKey::Tab, "Escape" => servo::NamedKey::Escape, _ => servo::NamedKey::Unidentified }), servo::Code::Unidentified),
+                "shot" => shot(arg),
+                "js" => wv.evaluate_javascript(arg, |r| log(format!("JS result: {r:?}"))),
+                _ => log(format!("unknown step {s}")),
             }
-            if let Ok(d) = std::env::var("SCROLL") {
-                let dy: f64 = d.parse().unwrap_or(0.0);
-                wv.notify_input_event(InputEvent::Wheel(WheelEvent::new(
-                    WheelDelta { x: 0.0, y: dy, z: 0.0, mode: WheelMode::DeltaPixel },
-                    servo::DevicePoint::new(600.0, 400.0).into(),
-                )));
-                log(format!("TEST scrolled {dy}"));
-            }
+        } else if step >= steps.len() && !steps.is_empty() && Instant::now() >= wait_until + Duration::from_secs(2) {
+            break;
         }
         if last.elapsed() > Duration::from_secs(5) {
             last = Instant::now();
@@ -339,9 +372,7 @@ fn software_fallback(urls: &[String], secs: u64) {
         }
         std::thread::sleep(Duration::from_millis(16));
     }
-    if let Some(img) = ctx.read_to_image(DeviceIntRect::from_size(euclid::Size2D::new(w as i32, h as i32))) {
-        let _ = img.save("cairn-gpu-probe-fallback.png");
-    }
+    shot("cairn-gpu-probe-fallback.png");
 }
 
 fn main() {
