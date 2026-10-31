@@ -4,7 +4,7 @@
 //! If no GPU/window context can be created it falls back to CPU rendering (headless) and says so in the log.
 use servo::{
     ConsoleLogLevel, DeviceIntRect, EventLoopWaker, InputEvent, LoadStatus, Opts, RenderingContext, Servo,
-    ServoBuilder, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate, WheelDelta, WheelEvent,
+    MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, ServoBuilder, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate, WheelDelta, WheelEvent,
     WheelMode, WindowRenderingContext,
 };
 use std::{
@@ -17,7 +17,7 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event::{ElementState, MouseButton as WButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     keyboard::{Key, NamedKey},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -112,12 +112,14 @@ impl WebViewDelegate for Delegate {
     }
 }
 
+// field order = drop order: webviews, then servo, then GL context, then window
 struct Running {
-    window: Rc<Window>,
+    tabs: Vec<WebView>,
     servo: Servo,
     ctx: Rc<WindowRenderingContext>,
-    tabs: Vec<WebView>,
+    window: Rc<Window>,
     active: usize,
+    cursor: servo::DevicePoint,
 }
 
 struct App {
@@ -127,6 +129,27 @@ struct App {
     start: Instant,
     last_mem: Instant,
     state: Option<Running>,
+}
+
+// Stopgap: Servo 0.7's `webcrypto` feature does not resolve from crates.io (RustCrypto prereleases).
+const CRYPTO_POLYFILL: &str = r#"(function(){
+if (typeof globalThis.crypto !== 'undefined') return;
+var bad = function(){ throw new Error('crypto.subtle is not available'); };
+var gv = function(a){ if (!a || !a.buffer) throw new TypeError('not a typed array');
+  if (a.byteLength > 65536) throw new DOMException('too large','QuotaExceededError');
+  var u = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  for (var i = 0; i < u.length; i++) u[i] = Math.floor(Math.random() * 256);
+  return a; };
+var uuid = function(){ var b = new Uint8Array(16); gv(b); b[6] = b[6] & 15 | 64; b[8] = b[8] & 63 | 128;
+  var h = Array.prototype.map.call(b, function(x){ return (x + 256).toString(16).slice(1); }).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20); };
+Object.defineProperty(globalThis, 'crypto', { value: { getRandomValues: gv, randomUUID: uuid, subtle: undefined }, configurable: true });
+})();"#;
+
+fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
+    let m = Rc::new(servo::UserContentManager::new(servo));
+    m.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
+    m
 }
 
 fn prefs() -> servo::Preferences {
@@ -157,12 +180,14 @@ impl ApplicationHandler<()> for App {
         let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).event_loop_waker(Box::new(self.waker.clone())).build();
         let scale = window.scale_factor() as f32;
         let delegate = Rc::new(Delegate { window: Some(window.clone()) });
+        let ucm = user_content(&servo);
         let tabs: Vec<WebView> = self
             .urls
             .iter()
             .enumerate()
             .map(|(i, u)| {
                 let wv = WebViewBuilder::new(&servo, ctx.clone())
+                    .user_content_manager(ucm.clone())
                     .url(url::Url::parse(u).expect("url"))
                     .hidpi_scale_factor(euclid::Scale::new(scale))
                     .delegate(delegate.clone())
@@ -173,8 +198,12 @@ impl ApplicationHandler<()> for App {
                 wv
             })
             .collect();
-        self.state = Some(Running { window, servo, ctx, tabs, active: 0 });
+        self.state = Some(Running { window, servo, ctx, tabs, active: 0, cursor: servo::DevicePoint::default() });
         log(mem());
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.state.take();
     }
 
     fn user_event(&mut self, el: &ActiveEventLoop, _: ()) {
@@ -202,8 +231,24 @@ impl ApplicationHandler<()> for App {
                 };
                 s.tabs[s.active].notify_input_event(InputEvent::Wheel(WheelEvent::new(
                     WheelDelta { x, y, z: 0.0, mode },
-                    servo::DevicePoint::default().into(),
+                    s.cursor.into(),
                 )));
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                s.cursor = servo::DevicePoint::new(position.x as f32, position.y as f32);
+                s.tabs[s.active].notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(s.cursor.into())));
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let b = match button {
+                    WButton::Left => MouseButton::Primary,
+                    WButton::Right => MouseButton::Secondary,
+                    WButton::Middle => MouseButton::Auxiliary,
+                    WButton::Back => MouseButton::Back,
+                    WButton::Forward => MouseButton::Forward,
+                    WButton::Other(n) => MouseButton::Other(n),
+                };
+                let a = if state == ElementState::Pressed { MouseButtonAction::Down } else { MouseButtonAction::Up };
+                s.tabs[s.active].notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(a, b, s.cursor.into())));
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 if let Key::Character(c) = &event.logical_key {
@@ -249,11 +294,12 @@ fn software_fallback(urls: &[String], secs: u64) {
     let (w, h) = (1280u32, 800u32);
     let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).build();
     let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("software ctx"));
+    let ucm = user_content(&servo);
     let tabs: RefCell<Vec<WebView>> = RefCell::new(
         urls.iter()
             .enumerate()
             .map(|(i, u)| {
-                let wv = WebViewBuilder::new(&servo, ctx.clone()).url(url::Url::parse(u).unwrap()).delegate(Rc::new(Delegate { window: None })).build();
+                let wv = WebViewBuilder::new(&servo, ctx.clone()).user_content_manager(ucm.clone()).url(url::Url::parse(u).unwrap()).delegate(Rc::new(Delegate { window: None })).build();
                 if i > 0 {
                     wv.hide();
                 }
@@ -262,10 +308,31 @@ fn software_fallback(urls: &[String], secs: u64) {
             .collect(),
     );
     let t = Instant::now();
+    let mut did_input = false;
     let mut last = Instant::now() - Duration::from_secs(10);
     while t.elapsed() < Duration::from_secs(secs.min(60)) {
         servo.spin_event_loop();
         tabs.borrow()[0].paint();
+        if !did_input && t.elapsed() > Duration::from_secs(secs / 2) {
+            did_input = true;
+            let wv = &tabs.borrow()[0];
+            if let Ok(c) = std::env::var("CLICK") {
+                let v: Vec<f32> = c.split(',').filter_map(|x| x.parse().ok()).collect();
+                let p: servo::WebViewPoint = servo::DevicePoint::new(v[0], v[1]).into();
+                wv.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(p)));
+                wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Down, MouseButton::Primary, p)));
+                wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Up, MouseButton::Primary, p)));
+                log(format!("TEST clicked at {c}"));
+            }
+            if let Ok(d) = std::env::var("SCROLL") {
+                let dy: f64 = d.parse().unwrap_or(0.0);
+                wv.notify_input_event(InputEvent::Wheel(WheelEvent::new(
+                    WheelDelta { x: 0.0, y: dy, z: 0.0, mode: WheelMode::DeltaPixel },
+                    servo::DevicePoint::new(600.0, 400.0).into(),
+                )));
+                log(format!("TEST scrolled {dy}"));
+            }
+        }
         if last.elapsed() > Duration::from_secs(5) {
             last = Instant::now();
             log(mem());
