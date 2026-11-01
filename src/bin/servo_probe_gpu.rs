@@ -146,9 +146,22 @@ var uuid = function(){ var b = new Uint8Array(16); gv(b); b[6] = b[6] & 15 | 64;
 Object.defineProperty(globalThis, 'crypto', { value: { getRandomValues: gv, randomUUID: uuid, subtle: undefined }, configurable: true });
 })();"#;
 
+const CSP_DEBUG: &str = r#"(function(){
+var tag = function(){ try { return location.href.slice(0,70); } catch(e) { return '?'; } };
+document.addEventListener('securitypolicyviolation', function(e){ console.error('CSPV ['+tag()+'] blocked='+e.blockedURI+' dir='+e.violatedDirective+' policy='+e.originalPolicy); });
+try { var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'src'); Object.defineProperty(HTMLIFrameElement.prototype,'src',{get:d.get,set:function(v){ console.error('IFRAME.src= ['+tag()+'] '+String(v).slice(0,200)); d.set.call(this,v); },configurable:true});
+var d2 = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'srcdoc'); Object.defineProperty(HTMLIFrameElement.prototype,'srcdoc',{get:d2.get,set:function(v){ console.error('IFRAME.srcdoc= ['+tag()+'] len='+String(v).length+' '+String(v).slice(0,200)); d2.set.call(this,v); },configurable:true}); } catch(e) {}
+if (window !== window.top) { try { fetch(location.href.split('#')[0]).then(function(r){ console.error('HDRS ['+tag()+'] csp='+r.headers.get('content-security-policy')+' xfo='+r.headers.get('x-frame-options')); }); } catch(e) {} }
+var oa = Element.prototype.setAttribute; Element.prototype.setAttribute = function(k,v){ if (this.tagName==='IFRAME' && (k==='src'||k==='srcdoc')) console.error('IFRAME.setAttribute '+k+' ['+tag()+'] '+String(v).slice(0,200)); return oa.call(this,k,v); };
+new MutationObserver(function(ms){ ms.forEach(function(m){ m.addedNodes.forEach(function(n){ if (n.tagName === 'IFRAME') console.error('IFRAME ['+tag()+'] src='+String(n.getAttribute('src')).slice(0,120)+' srcdoc='+(n.hasAttribute('srcdoc')?n.getAttribute('srcdoc').length:'no')+' sandbox='+n.getAttribute('sandbox')); }); }); }).observe(document, {childList:true, subtree:true});
+})();"#;
+
 fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
     let m = Rc::new(servo::UserContentManager::new(servo));
     m.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
+    if std::env::var_os("CSPDEBUG").is_some() {
+        m.add_script(Rc::new(servo::UserScript::new(CSP_DEBUG.to_string(), None)));
+    }
     m
 }
 
