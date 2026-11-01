@@ -139,7 +139,7 @@ export component MainWindow inherits Window {
                     height: 44px;
                     IconButton { glyph: "←"; size: 38px; clicked => { Logic.back(); } }
                     IconButton { glyph: "→"; size: 38px; clicked => { Logic.forward(); } }
-                    IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: 38px; clicked => { Logic.reload(); } }
+                    IconButton { glyph: "⟳"; spinning: AppData.loading; size: 38px; clicked => { Logic.reload(); } }
                     UrlBar { accepted(t) => { Logic.navigate(t); } y: 0px; bar-height: 38px; }
                     if AppData.show-shield: Text { text: "Blocked " + AppData.blocked-count; color: Pal.good; vertical-alignment: center; }
                     IconButton { glyph: "☰"; size: 38px; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
@@ -157,7 +157,7 @@ export component MainWindow inherits Window {
                 if root.short: IconButton { glyph: "←"; size: root.bar-h; clicked => { Logic.back(); } }
                 if root.short: IconButton { glyph: "→"; size: root.bar-h; clicked => { Logic.forward(); } }
                 UrlBar { accepted(t) => { Logic.navigate(t); } bar-height: root.bar-h; }
-                if root.short: IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: root.bar-h; clicked => { Logic.reload(); } }
+                if root.short: IconButton { glyph: "⟳"; spinning: AppData.loading; size: root.bar-h; clicked => { Logic.reload(); } }
                 if !root.phone || root.short: Rectangle {
                     width: root.bar-h;
                     height: root.bar-h;
@@ -222,7 +222,7 @@ export component MainWindow inherits Window {
                 padding: 4px;
                 IconButton { glyph: "←"; size: 44px; horizontal-stretch: 1; clicked => { Logic.back(); } }
                 IconButton { glyph: "→"; size: 44px; horizontal-stretch: 1; clicked => { Logic.forward(); } }
-                IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: 44px; horizontal-stretch: 1; clicked => { Logic.reload(); } }
+                IconButton { glyph: "⟳"; spinning: AppData.loading; size: 44px; horizontal-stretch: 1; clicked => { Logic.reload(); } }
                 Rectangle {
                     horizontal-stretch: 1;
                     Rectangle {

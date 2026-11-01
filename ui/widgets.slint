@@ -5,6 +5,7 @@ export component IconButton inherits Rectangle {
     in property <length> size: 36px;
     in property <bool> active: false;
     in property <bool> enabled: true;
+    in property <bool> spinning: false;
     in property <color> tint: Pal.text;
     callback clicked();
     width: size;
@@ -12,7 +13,16 @@ export component IconButton inherits Rectangle {
     border-radius: 8px;
     background: active ? Pal.surface-hi : (ta.has-hover && enabled ? Pal.surface-hi : transparent);
     opacity: enabled ? 1 : 0.35;
-    Text { text: root.glyph; color: root.tint; font-size: root.size * 0.5; horizontal-alignment: center; vertical-alignment: center; }
+    if !root.spinning: Text { text: root.glyph; color: root.tint; font-size: root.size * 0.5; horizontal-alignment: center; vertical-alignment: center; }
+    if root.spinning: Path {
+        property <angle> a0: Math.mod(animation-tick() / 1s, 0.9) / 0.9 * 360deg;
+        property <angle> a1: a0 + 270deg;
+        width: root.size * 0.5; height: root.size * 0.5;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        viewbox-width: 100; viewbox-height: 100;
+        commands: "M " + (50 + 44 * Math.cos(a0)) + " " + (50 + 44 * Math.sin(a0)) + " A 44 44 0 1 1 " + (50 + 44 * Math.cos(a1)) + " " + (50 + 44 * Math.sin(a1));
+        stroke: root.tint; stroke-width: 10px; stroke-line-cap: round; fill: transparent;
+    }
     ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
 }
 
