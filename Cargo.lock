@@ -1015,6 +1015,7 @@ dependencies = [
  "euclid",
  "lz4_flex",
  "rustls",
+ "serde_json",
  "servo",
  "slint",
  "slint-build",

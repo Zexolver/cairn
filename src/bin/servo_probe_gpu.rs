@@ -147,6 +147,7 @@ struct App {
     start: Instant,
     last_mem: Instant,
     state: Option<Running>,
+    spawned: Rc<RefCell<Vec<WebView>>>,
 }
 
 // Stopgap: Servo 0.7's `webcrypto` feature does not resolve from crates.io (RustCrypto prereleases).
@@ -260,7 +261,8 @@ impl ApplicationHandler<()> for App {
         log("RENDER MODE: window rendering context created (GPU if the driver is hardware; see glxinfo/eglinfo lines above)");
         let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).event_loop_waker(Box::new(self.waker.clone())).build();
         let scale = window.scale_factor() as f32;
-        let delegate = Rc::new(Delegate::plain(Some(window.clone())));
+        let dctx: Rc<dyn servo::RenderingContext> = ctx.clone();
+        let delegate = Rc::new(Delegate { window: Some(window.clone()), ctx: Some(dctx), spawned: self.spawned.clone() });
         let ucm = user_content(&servo);
         let tabs: Vec<WebView> = self
             .urls
@@ -357,6 +359,18 @@ impl App {
     fn tick(&mut self, el: &ActiveEventLoop) {
         if let Some(s) = &self.state {
             s.servo.spin_event_loop();
+        }
+        if let Some(s) = self.state.as_mut() {
+            let fresh: Vec<WebView> = self.spawned.borrow_mut().drain(..).collect();
+            for wv in fresh {
+                s.tabs[s.active].hide();
+                wv.show();
+                wv.resize(s.window.inner_size());
+                s.tabs.push(wv);
+                s.active = s.tabs.len() - 1;
+                log(format!("NEWTAB active: tab {}", s.active + 1));
+                s.window.request_redraw();
+            }
         }
         if self.last_mem.elapsed() > Duration::from_secs(5) {
             self.last_mem = Instant::now();
@@ -489,7 +503,7 @@ fn main() {
             return;
         }
     };
-    let mut app = App { waker: Waker(el.create_proxy()), urls, secs, start: Instant::now(), last_mem: Instant::now(), state: None };
+    let mut app = App { waker: Waker(el.create_proxy()), urls, secs, start: Instant::now(), last_mem: Instant::now(), state: None, spawned: Rc::default() };
     let r = el.run_app(&mut app);
     log(format!("exit: {r:?}"));
     log(mem());
