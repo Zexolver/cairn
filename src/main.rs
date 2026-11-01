@@ -1,4 +1,6 @@
 mod engine;
+#[cfg(feature = "servo")]
+mod servo_engine;
 
 use cairn_core::{
     blocker::Blocker,
@@ -30,7 +32,11 @@ struct State {
 impl State {
     fn engine_for(&mut self, container: u32) -> &mut Box<dyn Engine> {
         let vp = self.viewport;
+        let dir = self.data_dir.clone();
         self.engines.entry(container).or_insert_with(|| {
+            #[cfg(feature = "servo")]
+            let mut e: Box<dyn Engine> = Box::new(servo_engine::ServoEngine::new(&dir.join("containers").join(container.to_string()), vp));
+            #[cfg(not(feature = "servo"))]
             let mut e: Box<dyn Engine> = Box::new(StubEngine::default());
             e.resize(vp.0, vp.1);
             e
@@ -237,6 +243,8 @@ fn opt(id: i32) -> Option<u32> {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    #[cfg(feature = "servo")]
+    rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
     let ui = MainWindow::new()?;
     let data_dir = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn"));
     let blocker = Rc::new(Blocker::new());
@@ -487,7 +495,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let mut s = st.borrow_mut();
-        let home = s.settings.homepage.clone();
+        let home = std::env::var("CAIRN_URL").unwrap_or_else(|_| s.settings.homepage.clone());
         s.open_tab(&home);
         refresh(&ui, &mut s);
     }
@@ -537,6 +545,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             }
                         }
                         Event::Blocked(n) => s.blocked += n,
+                        Event::Redraw => {}
                     }
                 }
             }
@@ -549,6 +558,19 @@ fn main() -> Result<(), slint::PlatformError> {
             if changed {
                 refresh(&ui, &mut s);
                 paint(&ui, &mut s);
+            }
+        });
+    }
+    // CAIRN_BENCH=<secs>: print RSS every 5s and quit (for RAM comparisons)
+    let bench = std::env::var("CAIRN_BENCH").ok().and_then(|s| s.parse::<u64>().ok());
+    let t0 = std::time::Instant::now();
+    let bench_timer = slint::Timer::default();
+    if let Some(limit) = bench {
+        bench_timer.start(slint::TimerMode::Repeated, Duration::from_secs(5), move || {
+            let rss: String = std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().filter(|l| l.starts_with("VmRSS") || l.starts_with("RssAnon")).collect::<Vec<_>>().join(" ");
+            eprintln!("[{:>4}s] {rss}", t0.elapsed().as_secs());
+            if t0.elapsed().as_secs() >= limit {
+                let _ = slint::quit_event_loop();
             }
         });
     }

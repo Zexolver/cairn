@@ -12,6 +12,7 @@ pub enum Event {
     Url(TabId, String),
     Loading(TabId, bool),
     Blocked(u32),
+    Redraw,
 }
 
 pub enum Input {
