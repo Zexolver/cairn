@@ -153,7 +153,7 @@ fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
 }
 
 fn prefs() -> servo::Preferences {
-    servo::Preferences { dom_intersection_observer_enabled: true, dom_visual_viewport_enabled: true, ..Default::default() }
+    servo::Preferences { dom_intersection_observer_enabled: true, dom_visual_viewport_enabled: true, dom_indexeddb_enabled: true, ..Default::default() }
 }
 
 fn opts() -> Opts {
