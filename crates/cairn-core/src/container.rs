@@ -4,6 +4,17 @@ use serde::{Deserialize, Serialize};
 
 pub type ContainerId = u32;
 pub type TabId = u32;
+pub type GroupId = u32;
+
+/// A named, colored set of tabs inside one container.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TabGroup {
+    pub id: GroupId,
+    pub container: ContainerId,
+    pub name: String,
+    pub color: String,
+    pub collapsed: bool,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Container {
@@ -21,6 +32,7 @@ pub struct Tab {
     pub title: String,
     pub url: String,
     pub loading: bool,
+    pub group: Option<GroupId>,
 }
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -38,9 +50,11 @@ const PALETTE: &[&str] = &["#7aa2f7", "#9ece6a", "#e0af68", "#f7768e", "#bb9af7"
 pub struct Workspace {
     pub containers: Vec<Container>,
     pub tabs: Vec<Tab>,
+    pub groups: Vec<TabGroup>,
     pub active: Option<TabId>,
     next_container: ContainerId,
     next_tab: TabId,
+    next_group: GroupId,
 }
 
 impl Default for Workspace {
@@ -48,9 +62,11 @@ impl Default for Workspace {
         Self {
             containers: vec![Container { id: 0, name: "Default".into(), color: PALETTE[0].into(), proxy: None }],
             tabs: vec![],
+            groups: vec![],
             active: None,
             next_container: 1,
             next_tab: 1,
+            next_group: 1,
         }
     }
 }
@@ -79,6 +95,7 @@ impl Workspace {
         self.containers.retain(|c| c.id != id);
         let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tabs).into_iter().partition(|t| t.container == id);
         self.tabs = kept;
+        self.groups.retain(|g| g.container != id);
         if self.active.is_some_and(|a| gone.iter().any(|t| t.id == a)) {
             self.active = self.tabs.first().map(|t| t.id);
         }
@@ -91,7 +108,7 @@ impl Workspace {
         }
         let id = self.next_tab;
         self.next_tab += 1;
-        self.tabs.push(Tab { id, container, title: "New tab".into(), url: url.into(), loading: false });
+        self.tabs.push(Tab { id, container, title: "New tab".into(), url: url.into(), loading: false, group: None });
         self.active = Some(id);
         Ok(id)
     }
@@ -99,11 +116,46 @@ impl Workspace {
     pub fn close_tab(&mut self, id: TabId) -> Option<Tab> {
         let pos = self.tabs.iter().position(|t| t.id == id)?;
         let tab = self.tabs.remove(pos);
+        self.prune_groups();
         if self.active == Some(id) {
             let near = pos.min(self.tabs.len().saturating_sub(1));
             self.active = self.tabs.get(near).map(|t| t.id);
         }
         Some(tab)
+    }
+
+    pub fn add_group(&mut self, container: ContainerId, name: &str) -> Option<GroupId> {
+        let name = name.trim();
+        if name.is_empty() || !self.containers.iter().any(|c| c.id == container) {
+            return None;
+        }
+        let id = self.next_group;
+        self.next_group += 1;
+        let color = PALETTE[(id as usize + 2) % PALETTE.len()].to_string();
+        self.groups.push(TabGroup { id, container, name: name.into(), color, collapsed: false });
+        Some(id)
+    }
+
+    /// Puts a tab in a group of the same container, or ungroups it with `None`. Empty groups are dropped.
+    pub fn set_tab_group(&mut self, tab: TabId, group: Option<GroupId>) -> bool {
+        let Some(container) = self.tabs.iter().find(|t| t.id == tab).map(|t| t.container) else { return false };
+        if group.is_some_and(|g| !self.groups.iter().any(|x| x.id == g && x.container == container)) {
+            return false;
+        }
+        self.tab_mut(tab).unwrap().group = group;
+        self.prune_groups();
+        true
+    }
+
+    pub fn toggle_group(&mut self, group: GroupId) {
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == group) {
+            g.collapsed = !g.collapsed;
+        }
+    }
+
+    fn prune_groups(&mut self) {
+        let used: Vec<GroupId> = self.tabs.iter().filter_map(|t| t.group).collect();
+        self.groups.retain(|g| used.contains(&g.id));
     }
 
     pub fn tab_mut(&mut self, id: TabId) -> Option<&mut Tab> {
@@ -141,6 +193,22 @@ mod tests {
         assert_eq!(gone.len(), 1);
         assert_eq!(w.active, None);
         assert_eq!(w.remove_container(0), Err(ContainerError::LastContainer));
+    }
+
+    #[test]
+    fn groups_stay_within_container_and_vanish_when_empty() {
+        let mut w = Workspace::default();
+        let other = w.add_container("O").unwrap();
+        let a = w.open_tab(0, "a").unwrap();
+        let b = w.open_tab(other, "b").unwrap();
+        let g = w.add_group(0, "Reading").unwrap();
+        assert!(w.set_tab_group(a, Some(g)));
+        assert!(!w.set_tab_group(b, Some(g)));
+        w.toggle_group(g);
+        assert!(w.groups[0].collapsed);
+        w.close_tab(a);
+        assert!(w.groups.is_empty());
+        assert!(w.add_group(0, " ").is_none());
     }
 
     #[test]
