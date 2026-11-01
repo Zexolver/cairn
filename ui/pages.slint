@@ -167,7 +167,7 @@ export component SettingsPage inherits PageFrame {
             viewport-width: chips.preferred-width;
             chips := HorizontalLayout {
                 spacing: 6px;
-                for c[i] in cats: Pill { label: c; selected: i == cat; min-width: 110px; clicked => { cat = i; } }
+                for c[i] in cats: Pill { label: c; selected: i == cat; min-width: 150px; clicked => { cat = i; } }
             }
         }
         body-narrow := ScrollView {

@@ -113,8 +113,8 @@ export component MainWindow inherits Window {
     property <bool> phone: self.width < 600px;
     property <bool> short: self.height < 500px;
     property <bool> compact: phone || short;
-    property <bool> switcher-open: false;
-    property <bool> menu-open: false;
+    in-out property <bool> switcher-open: false;
+    in-out property <bool> menu-open: false;
     property <length> bar-h: compact ? 44px : 40px;
 
     Rectangle {
@@ -141,7 +141,7 @@ export component MainWindow inherits Window {
                     IconButton { glyph: "→"; size: 38px; clicked => { Logic.forward(); } }
                     IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: 38px; clicked => { Logic.reload(); } }
                     UrlBar { accepted(t) => { Logic.navigate(t); } y: 0px; bar-height: 38px; }
-                    if AppData.show-shield: Text { text: "🛡 " + AppData.blocked-count; color: Pal.good; vertical-alignment: center; }
+                    if AppData.show-shield: Text { text: "Blocked " + AppData.blocked-count; color: Pal.good; vertical-alignment: center; }
                     IconButton { glyph: "☰"; size: 38px; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
                 }
             }
@@ -168,7 +168,6 @@ export component MainWindow inherits Window {
                     TouchArea { clicked => { root.switcher-open = true; } }
                 }
                 if root.short: IconButton { glyph: "☰"; size: root.bar-h; clicked => { root.menu-open = !root.menu-open; } }
-                if root.phone && !root.short && AppData.show-shield: Text { text: "🛡" + AppData.blocked-count; color: Pal.good; vertical-alignment: center; font-size: 12px; }
             }
         }
         content := Rectangle {
@@ -259,7 +258,7 @@ export component MainWindow inherits Window {
         Rectangle {
             property <length> w: root.phone ? root.width : 260px;
             width: w;
-            height: min(root.height - 8px, 5 * 48px + 16px);
+            height: min(root.height - 8px, 6 * 48px + 16px);
             x: root.phone ? 0px : root.width - w - 8px;
             y: root.phone ? root.height - self.height : 56px;
             background: Pal.surface;
@@ -270,6 +269,7 @@ export component MainWindow inherits Window {
             drop-shadow-color: #00000066;
             VerticalLayout {
                 padding: 8px;
+                MenuItem { glyph: "🛡"; label: "Blocked this session: " + AppData.blocked-count; enabled: false; visible: AppData.show-shield; height: AppData.show-shield ? 48px : 0px; }
                 MenuItem { glyph: "+"; label: "New tab"; clicked => { root.menu-open = false; Logic.new-tab(); } }
                 MenuItem { glyph: "⚙"; label: "Tab options & site rule"; enabled: AppData.has-tab; clicked => { root.menu-open = false; AppData.page = Page.tab-options; } }
                 MenuItem { glyph: "★"; label: "Bookmarks"; clicked => { root.menu-open = false; Logic.open-folder(0); AppData.page = Page.bookmarks; } }

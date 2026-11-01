@@ -11,6 +11,7 @@ description = "Lightweight cross-platform browser: Slint UI, Servo engine, conta
 [features]
 default = []
 # Real Servo engine (huge build). Without it a stub engine is used so the UI can be developed quickly.
+shot = ["dep:png"]
 servo = ["dep:servo", "dep:winit", "dep:rustls", "dep:dpi", "dep:url", "dep:euclid", "dep:zstd", "dep:lz4_flex","dep:serde_json"]
 
 # Extra Servo web features, for RAM/compat experiments
@@ -21,6 +22,7 @@ webfx-xr = ["webfx", "servo/webxr"]
 [dependencies]
 cairn-core = { path = "crates/cairn-core" }
 slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "compat-1-2"] }
+png = { version = "0.17", optional = true }
 servo = { version = "0.7", optional = true, default-features = false, features = ["baked-in-resources", "bundled_freetype", "js_jit"] }
 euclid = { version = "0.22", optional = true }
 zstd = { version = "0.13", optional = true }
@@ -48,6 +50,11 @@ required-features = ["servo"]
 name = "servo_probe_gpu"
 path = "src/bin/servo_probe_gpu.rs"
 required-features = ["servo"]
+
+[[bin]]
+name = "cairn_shot"
+path = "src/bin/cairn_shot.rs"
+required-features = ["shot"]
 
 [[bin]]
 name = "cairn"
