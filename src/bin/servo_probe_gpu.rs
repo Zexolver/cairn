@@ -95,6 +95,26 @@ struct Delegate {
     menu: RefCell<Option<servo::ContextMenu>>,
 }
 impl WebViewDelegate for Delegate {
+    fn screen_geometry(&self, _: WebView) -> Option<servo::ScreenGeometry> {
+        use euclid::{Point2D, Size2D};
+        let (screen, origin, outer) = match &self.window {
+            Some(w) => {
+                let m = w.current_monitor().map(|m| m.size()).unwrap_or(dpi::PhysicalSize::new(1920, 1080));
+                let p = w.outer_position().unwrap_or(dpi::PhysicalPosition::new(0, 0));
+                (m, p, w.outer_size())
+            }
+            None => {
+                let c = self.ctx.as_ref().map(|c| c.size()).unwrap_or(dpi::PhysicalSize::new(1280, 800));
+                (c, dpi::PhysicalPosition::new(0, 0), c)
+            }
+        };
+        let sz = Size2D::new(screen.width as i32, screen.height as i32);
+        Some(servo::ScreenGeometry {
+            size: sz,
+            available_size: sz,
+            window_rect: DeviceIntRect::new(Point2D::new(origin.x, origin.y), Point2D::new(origin.x + outer.width as i32, origin.y + outer.height as i32)),
+        })
+    }
     fn notify_new_frame_ready(&self, _: WebView) {
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -231,7 +251,10 @@ var tag = function(){ try { return location.href.slice(0,60); } catch(e) { retur
 window.addEventListener('message', function(e){ var d=e.data, ev=''; try{ ev = (typeof d==='string'?d:JSON.stringify(d)).slice(0,(d&&d.cs)?1500:100);}catch(x){}
  var rel=[]; try{ rel.push('src==self:'+(e.source===window)); rel.push('src==top:'+(e.source===window.top)); rel.push('src.parent==self:'+(e.source&&e.source.parent===window)); rel.push('nframes:'+window.length); for(var i=0;i<window.length;i++){ rel.push('f'+i+'==src:'+(window.frames[i]===e.source)); } }catch(x){ rel.push('err '+x); }
  console.error('PM ['+tag()+'] from='+e.origin+' '+rel.join(' ')+' data='+ev); }, true);
-var oas = Element.prototype.attachShadow; Element.prototype.attachShadow = function(o){ console.error('SHADOW ['+tag()+'] mode='+(o&&o.mode)+' host='+this.tagName+'#'+this.id); return oas.call(this,o); };
+if(location.host==='challenges.cloudflare.com'){ [5000,7000,8500,9500,10500,11500,13000,16000].forEach(function(t){ setTimeout(function(){ try{ var b=document.body; var sr=b&&b.shadowRoot; var h=(sr?('[SR]'+sr.innerHTML):(b?b.outerHTML:'nobody')).replace(/\s+/g,' '); console.error('DOMDUMP ['+tag()+'] t='+t+' w='+innerWidth+'x'+innerHeight+' sheets='+document.styleSheets.length+' '+h.slice(0,2500)); var cs=(b&&b.shadowRoot?b.shadowRoot:document).querySelectorAll('input,label,svg,div,span'); var o=[]; cs.forEach(function(n){ var r=n.getBoundingClientRect(); var st=getComputedStyle(n); o.push(n.tagName+'#'+n.id+'.'+(n.getAttribute('class')||'')+' '+Math.round(r.width)+'x'+Math.round(r.height)+' disp='+st.display+' vis='+st.visibility+' op='+st.opacity); }); try{ var stx=(b.shadowRoot.querySelector('style')||{}).textContent||''; ['DKMBe4','mRdqy6','bcQj6','aDsyi9'].forEach(function(c){ var re=new RegExp('[^}]*\\.'+c+'[^{]*\\{[^}]*\\}','g'); var m=stx.match(re); console.error('CSSRULE '+c+' '+(m?m.join(' ').slice(0,700):'none')); }); var sr2=b.shadowRoot; var sts=sr2.querySelectorAll('style'); var si=[]; sts.forEach(function(x){ var n=-1; try{ n=x.sheet?x.sheet.cssRules.length:-2 }catch(e3){ n=-3 } si.push(n+':'+x.textContent.length+':'+x.isConnected); }); console.error('SHEETS srSheets='+(sr2.styleSheets&&sr2.styleSheets.length)+' adopted='+(sr2.adoptedStyleSheets&&sr2.adoptedStyleSheets.length)+' styles='+si.join(',')+' hostCls='+b.className+' wrapCls='+(sr2.querySelector('.main-wrapper')||{}).className); var l=b.shadowRoot.querySelector('label'); console.error('LABELHTML '+l.outerHTML.slice(0,800)); var sp=b.shadowRoot.querySelector('.DKMBe4'); var c=getComputedStyle(sp); console.error('SPANCS w='+c.width+' h='+c.height+' disp='+c.display+' pos='+c.position+' flex='+c.flex+' minw='+c.minWidth+' bw='+c.borderWidth+' bg='+c.backgroundColor+' rect='+JSON.stringify(sp.getBoundingClientRect())+' offW='+sp.offsetWidth+' lblrect='+JSON.stringify(l.getBoundingClientRect())+' lblcs='+getComputedStyle(l).display+' parent='+l.parentNode.className); }catch(e2){ console.error('CSSDBG-ERR '+e2); }
+console.error('DOMBOXES ['+tag()+'] '+o.join(' | ').slice(0,1500)); }catch(e){ console.error('DOMDUMP-ERR '+e); } },t); }); }
+if(location.host==='challenges.cloudflare.com'){ ['mousemove','mousedown','mouseup','click','pointerdown','pointerup','change','input','focusin','touchstart'].forEach(function(n){ window.addEventListener(n,function(e){ if(n==='mousemove'&&window.__mm) return; if(n==='mousemove') window.__mm=1; var p=[]; try{ p=e.composedPath().slice(0,4).map(function(x){return x.tagName||x.nodeName}); }catch(_){} console.error('EVT '+n+' ['+tag()+'] x='+e.clientX+' y='+e.clientY+' trusted='+e.isTrusted+' path='+p.join('>')+' scr='+e.screenX+','+e.screenY+' pg='+e.pageX+','+e.pageY+' off='+e.offsetX+','+e.offsetY+' mv='+e.movementX+','+e.movementY+' ptr='+e.pointerType+' btn='+e.button+'/'+e.buttons+' det='+e.detail+' ts='+Math.round(e.timeStamp)+' win.scr='+window.screenX+','+window.screenY+' sz='+screen.width+'x'+screen.height+' outer='+window.outerWidth+'x'+window.outerHeight+' dpr='+devicePixelRatio+' pid='+e.pointerId+' w='+e.width+'x'+e.height+' pr='+e.pressure); },true); }); }
+var oas = Element.prototype.attachShadow; Element.prototype.attachShadow = function(o){ console.error('SHADOW ['+tag()+'] mode='+(o&&o.mode)+' host='+this.tagName+'#'+this.id); var o2=Object.assign({},o||{}); if(o2.mode==='closed') o2.mode='open'; return oas.call(this,o2); };
 ['appendChild','insertBefore'].forEach(function(n){ var o=Node.prototype[n]; Node.prototype[n]=function(a){ try{ if(a && a.tagName==='IFRAME') console.error('IFRAME-ADD ['+tag()+'] via '+n+' into '+(this.nodeName)+' src='+String(a.src).slice(0,150)+' sandbox='+a.getAttribute('sandbox')+' style='+a.getAttribute('style')); }catch(x){} return o.apply(this,arguments); }; });
 window.addEventListener('error',function(e){ console.error('ONERROR ['+tag()+'] '+e.message+' @'+String(e.filename).slice(0,80)+':'+e.lineno); },true);
 window.addEventListener('unhandledrejection',function(e){ console.error('UNHANDLED ['+tag()+'] '+String(e.reason&&(e.reason.stack||e.reason)).slice(0,300)); });
