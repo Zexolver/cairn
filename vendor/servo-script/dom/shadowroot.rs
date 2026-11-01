@@ -220,6 +220,7 @@ impl ShadowRoot {
         owner_node: &Element,
         sheet: Arc<Stylesheet>,
     ) {
+        {
         let stylesheets = &mut self.author_styles.borrow_mut().stylesheets;
 
         // FIXME(stevennovaryo): This is almost identical with the one in Document::add_stylesheet.
@@ -244,6 +245,8 @@ impl ShadowRoot {
             insertion_point,
             self.document.style_shared_author_lock(),
         );
+        }
+        self.invalidate_stylesheets(no_gc);
     }
 
     /// Append a constructed stylesheet to the back of shadow root stylesheet set.
@@ -263,6 +266,7 @@ impl ShadowRoot {
             insertion_point,
             self.document.style_shared_author_lock(),
         );
+        self.document.invalidate_shadow_roots_stylesheets();
     }
 
     /// Remove a stylesheet owned by `owner` from the list of shadow root sheets.
@@ -272,7 +276,8 @@ impl ShadowRoot {
             owner,
             s,
             StylesheetSetRef::Author(&mut self.author_styles.borrow_mut().stylesheets),
-        )
+        );
+        self.document.invalidate_shadow_roots_stylesheets();
     }
 
     pub(crate) fn invalidate_stylesheets(&self, no_gc: &NoGC) {
