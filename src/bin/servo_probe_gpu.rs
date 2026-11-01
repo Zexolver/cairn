@@ -43,7 +43,27 @@ fn cmd(c: &str, args: &[&str]) -> String {
         .unwrap_or_else(|e| format!("<{c} unavailable: {e}>"))
 }
 
+fn cfdebug() -> bool {
+    std::env::var_os("NOCFDEBUG").is_none()
+}
+
+fn netcheck() {
+    use std::net::{TcpStream, ToSocketAddrs};
+    for host in ["brunhild.challenges.cloudflare.com", "challenges.cloudflare.com", "perchance.org"] {
+        match (host, 443).to_socket_addrs() {
+            Ok(addrs) => {
+                for a in addrs {
+                    let r = TcpStream::connect_timeout(&a, std::time::Duration::from_secs(5));
+                    log(format!("NETCHECK {host} {a} -> {}", match r { Ok(_) => "connected".to_string(), Err(e) => format!("FAILED {e}") }));
+                }
+            }
+            Err(e) => log(format!("NETCHECK {host} dns failed: {e}")),
+        }
+    }
+}
+
 fn sysinfo() {
+    netcheck();
     log(format!("cairn gpu probe, args={:?}", std::env::args().collect::<Vec<_>>()));
     log(format!("uname: {}", cmd("uname", &["-a"])));
     for l in std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default().lines() {
@@ -172,8 +192,8 @@ impl WebViewDelegate for Delegate {
             save_download(rest);
             return;
         }
-        if matches!(level, ConsoleLogLevel::Error | ConsoleLogLevel::Warn) || std::env::var_os("CFDEBUG").is_some() {
-            log(format!("CONSOLE {level:?} {}", m.chars().take(if std::env::var_os("CFDEBUG").is_some() { 3000 } else { 300 }).collect::<String>()));
+        if matches!(level, ConsoleLogLevel::Error | ConsoleLogLevel::Warn) || cfdebug() {
+            log(format!("CONSOLE {level:?} {}", m.chars().take(if cfdebug() { 3000 } else { 300 }).collect::<String>()));
         }
     }
 }
@@ -330,7 +350,7 @@ fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
     let m = Rc::new(servo::UserContentManager::new(servo));
     m.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
     m.add_script(Rc::new(servo::UserScript::new(DOWNLOAD_HOOK.to_string(), None)));
-    if std::env::var_os("CFDEBUG").is_some() {
+    if cfdebug() {
         m.add_script(Rc::new(servo::UserScript::new(CF_DEBUG.to_string(), None)));
     }
     if std::env::var_os("CSPDEBUG").is_some() {
