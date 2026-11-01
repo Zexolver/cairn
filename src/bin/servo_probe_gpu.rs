@@ -91,11 +91,8 @@ struct Delegate {
     window: Option<Rc<Window>>,
     ctx: Option<Rc<dyn servo::RenderingContext>>,
     spawned: Rc<RefCell<Vec<WebView>>>,
-}
-impl Delegate {
-    fn plain(window: Option<Rc<Window>>) -> Self {
-        Delegate { window, ctx: None, spawned: Rc::default() }
-    }
+    cursor: Rc<std::cell::Cell<(f32, f32)>>,
+    menu: RefCell<Option<servo::ContextMenu>>,
 }
 impl WebViewDelegate for Delegate {
     fn notify_new_frame_ready(&self, _: WebView) {
@@ -114,12 +111,43 @@ impl WebViewDelegate for Delegate {
     }
     fn request_create_new(&self, _parent: WebView, request: servo::CreateNewWebViewRequest) {
         let Some(ctx) = self.ctx.clone() else { return };
-        let delegate = Rc::new(Delegate { window: self.window.clone(), ctx: Some(ctx.clone()), spawned: self.spawned.clone() });
+        let delegate = Rc::new(Delegate { window: self.window.clone(), ctx: Some(ctx.clone()), spawned: self.spawned.clone(), cursor: self.cursor.clone(), menu: RefCell::default() });
         let wv = request.builder(ctx).delegate(delegate).build();
         log("NEWTAB requested (window.open / target=_blank)".to_string());
         self.spawned.borrow_mut().push(wv);
     }
-    fn show_console_message(&self, _: WebView, level: ConsoleLogLevel, m: String) {
+    fn show_embedder_control(&self, wv: WebView, control: servo::EmbedderControl) {
+        let servo::EmbedderControl::ContextMenu(menu) = control else { return };
+        let scale = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
+        let (cx, cy) = self.cursor.get();
+        let (x, y) = if cx > 0.0 || cy > 0.0 { (cx / scale, cy / scale) } else { (menu.position().min.x as f32 / scale, menu.position().min.y as f32 / scale) };
+        let items: Vec<serde_json::Value> = menu
+            .items()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| match it {
+                servo::ContextMenuItem::Item { label, enabled, .. } => serde_json::json!({"i": i, "l": label, "e": enabled}),
+                servo::ContextMenuItem::Separator => serde_json::json!({"sep": true}),
+            })
+            .collect();
+        let js = format!("({})({},{},{})", CONTEXT_MENU_JS, serde_json::Value::Array(items), x, y);
+        *self.menu.borrow_mut() = Some(menu);
+        wv.evaluate_javascript(js, |_| {});
+    }
+    fn hide_embedder_control(&self, wv: WebView, _: servo::EmbedderControlId) {
+        self.menu.borrow_mut().take();
+        wv.evaluate_javascript("var o=document.getElementById('__cairn_menu');o&&o.remove()", |_| {});
+    }
+    fn show_console_message(&self, wv: WebView, level: ConsoleLogLevel, m: String) {
+        if let Some(rest) = m.strip_prefix("CAIRN_MENU:") {
+            let menu = self.menu.borrow_mut().take();
+            if let (Some(menu), Ok(i)) = (menu, rest.parse::<usize>()) {
+                if let Some(servo::ContextMenuItem::Item { action, .. }) = menu.items().get(i).cloned() {
+                    menu.select(action);
+                }
+            }
+            return;
+        }
         if let Some(rest) = m.strip_prefix("CAIRN_DL:") {
             save_download(rest);
             return;
@@ -129,6 +157,37 @@ impl WebViewDelegate for Delegate {
         }
     }
 }
+
+const CONTEXT_MENU_JS: &str = r#"function(items,x,y){
+var o=document.getElementById('__cairn_menu'); if(o) o.remove();
+var h=document.createElement('div'); h.id='__cairn_menu';
+h.style.cssText='position:fixed;left:0;top:0;width:100%;height:100%;z-index:2147483647;margin:0;padding:0';
+var m=document.createElement('div');
+m.style.cssText='position:absolute;background:#2b2b2f;color:#eee;font:14px sans-serif;border:1px solid #555;border-radius:6px;padding:4px 0;min-width:180px;box-shadow:0 4px 14px rgba(0,0,0,.5)';
+function close(){ h.remove(); document.removeEventListener('keydown',kd,true); console.log('CAIRN_MENU:x'); }
+function kd(e){ if(e.key==='Escape'){ e.preventDefault(); close(); } }
+items.forEach(function(it){
+  var d=document.createElement('div');
+  if(it.sep){ d.style.cssText='height:1px;background:#555;margin:4px 0'; }
+  else {
+    d.textContent=it.l;
+    d.style.cssText='padding:6px 16px;cursor:default;'+(it.e?'':'color:#777');
+    if(it.e){
+      d.onmouseenter=function(){ d.style.background='#3d6fd1'; };
+      d.onmouseleave=function(){ d.style.background=''; };
+      d.onclick=function(ev){ ev.stopPropagation(); h.remove(); document.removeEventListener('keydown',kd,true); console.log('CAIRN_MENU:'+it.i); };
+    }
+  }
+  m.appendChild(d);
+});
+h.onmousedown=function(e){ if(e.target===h){ e.preventDefault(); close(); } };
+h.oncontextmenu=function(e){ e.preventDefault(); if(e.target===h) close(); };
+h.appendChild(m); document.documentElement.appendChild(h);
+var w=m.offsetWidth,hh=m.offsetHeight;
+m.style.left=Math.max(0,Math.min(x,window.innerWidth-w))+'px';
+m.style.top=Math.max(0,Math.min(y,window.innerHeight-hh))+'px';
+document.addEventListener('keydown',kd,true);
+}"#;
 
 // field order = drop order: webviews, then servo, then GL context, then window
 struct Running {
@@ -149,6 +208,7 @@ struct App {
     last_mem: Instant,
     state: Option<Running>,
     spawned: Rc<RefCell<Vec<WebView>>>,
+    cursor: Rc<std::cell::Cell<(f32, f32)>>,
 }
 
 // Stopgap: Servo 0.7's `webcrypto` feature does not resolve from crates.io (RustCrypto prereleases).
@@ -263,7 +323,7 @@ impl ApplicationHandler<()> for App {
         let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).event_loop_waker(Box::new(self.waker.clone())).build();
         let scale = window.scale_factor() as f32;
         let dctx: Rc<dyn servo::RenderingContext> = ctx.clone();
-        let delegate = Rc::new(Delegate { window: Some(window.clone()), ctx: Some(dctx), spawned: self.spawned.clone() });
+        let delegate = Rc::new(Delegate { window: Some(window.clone()), ctx: Some(dctx), spawned: self.spawned.clone(), cursor: self.cursor.clone(), menu: RefCell::default() });
         let ucm = user_content(&servo);
         let tabs: Vec<WebView> = self
             .urls
@@ -320,6 +380,7 @@ impl ApplicationHandler<()> for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 s.cursor = servo::DevicePoint::new(position.x as f32, position.y as f32);
+                self.cursor.set((position.x as f32, position.y as f32));
                 s.tabs[s.active].notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(s.cursor.into())));
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -432,7 +493,7 @@ fn software_fallback(urls: &[String], secs: u64) {
     let ucm = user_content(&servo);
     let spawned: Rc<RefCell<Vec<WebView>>> = Rc::default();
     let dctx: Rc<dyn servo::RenderingContext> = ctx.clone();
-    let mk_delegate = || Rc::new(Delegate { window: None, ctx: Some(dctx.clone()), spawned: spawned.clone() });
+    let mk_delegate = || Rc::new(Delegate { window: None, ctx: Some(dctx.clone()), spawned: spawned.clone(), cursor: Rc::default(), menu: RefCell::default() });
     let tabs: RefCell<Vec<WebView>> = RefCell::new(
         urls.iter()
             .enumerate()
@@ -457,12 +518,13 @@ fn software_fallback(urls: &[String], secs: u64) {
             let _ = img.save(name);
         }
     };
-    let click = |wv: &WebView, x: f32, y: f32| {
+    let click_b = |wv: &WebView, x: f32, y: f32, b: MouseButton| {
         let p: servo::WebViewPoint = servo::DevicePoint::new(x, y).into();
         wv.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(p)));
-        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Down, MouseButton::Primary, p)));
-        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Up, MouseButton::Primary, p)));
+        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Down, b, p)));
+        wv.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(MouseButtonAction::Up, b, p)));
     };
+    let click = |wv: &WebView, x: f32, y: f32| click_b(wv, x, y, MouseButton::Primary);
     let key = |wv: &WebView, k: servo::Key, code: servo::Code| {
         for st in [servo::KeyState::Down, servo::KeyState::Up] {
             wv.notify_input_event(InputEvent::Keyboard(servo::KeyboardEvent::new_without_event(
@@ -493,6 +555,10 @@ fn software_fallback(urls: &[String], secs: u64) {
                 "click" => {
                     let v: Vec<f32> = arg.split(',').filter_map(|x| x.parse().ok()).collect();
                     click(wv, v[0], v[1]);
+                }
+                "rclick" => {
+                    let v: Vec<f32> = arg.split(',').filter_map(|x| x.parse().ok()).collect();
+                    click_b(wv, v[0], v[1], MouseButton::Secondary);
                 }
                 "scroll" => {
                     wv.notify_input_event(InputEvent::Wheel(WheelEvent::new(
@@ -543,7 +609,7 @@ fn main() {
             return;
         }
     };
-    let mut app = App { waker: Waker(el.create_proxy()), urls, secs, start: Instant::now(), last_mem: Instant::now(), state: None, spawned: Rc::default() };
+    let mut app = App { waker: Waker(el.create_proxy()), urls, secs, start: Instant::now(), last_mem: Instant::now(), state: None, spawned: Rc::default(), cursor: Rc::default() };
     let r = el.run_app(&mut app);
     log(format!("exit: {r:?}"));
     log(mem());
