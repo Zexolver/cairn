@@ -138,6 +138,7 @@ struct Running {
     window: Rc<Window>,
     active: usize,
     cursor: servo::DevicePoint,
+    mods: winit::keyboard::ModifiersState,
 }
 
 struct App {
@@ -247,7 +248,7 @@ impl ApplicationHandler<()> for App {
         if self.state.is_some() {
             return;
         }
-        let window = Rc::new(el.create_window(Window::default_attributes().with_title("cairn gpu probe (keys 1-9 switch tab)")).expect("window"));
+        let window = Rc::new(el.create_window(Window::default_attributes().with_title("cairn gpu probe (Alt+1-9 switch tab, Ctrl+Q quits)")).expect("window"));
         let ctx = match WindowRenderingContext::new(el.display_handle().unwrap(), window.window_handle().unwrap(), window.inner_size()) {
             Ok(c) => Rc::new(c),
             Err(e) => {
@@ -281,7 +282,7 @@ impl ApplicationHandler<()> for App {
                 wv
             })
             .collect();
-        self.state = Some(Running { window, servo, ctx, tabs, active: 0, cursor: servo::DevicePoint::default() });
+        self.state = Some(Running { window, servo, ctx, tabs, active: 0, cursor: servo::DevicePoint::default(), mods: Default::default() });
         log(mem());
     }
 
@@ -333,22 +334,61 @@ impl ApplicationHandler<()> for App {
                 let a = if state == ElementState::Pressed { MouseButtonAction::Down } else { MouseButtonAction::Up };
                 s.tabs[s.active].notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(a, b, s.cursor.into())));
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                if let Key::Character(c) = &event.logical_key {
-                    if let Some(n) = c.chars().next().and_then(|c| c.to_digit(10)) {
-                        let n = n as usize;
-                        if n >= 1 && n <= s.tabs.len() && n - 1 != s.active {
-                            s.tabs[s.active].hide();
-                            s.active = n - 1;
-                            s.tabs[s.active].show();
-                            log(format!("SWITCH to tab {n}"));
-                            s.window.request_redraw();
+            WindowEvent::ModifiersChanged(m) => s.mods = m.state(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                let pressed = event.state == ElementState::Pressed;
+                if pressed && s.mods.control_key() && event.logical_key == Key::Character("q".into()) {
+                    el.exit();
+                    return;
+                }
+                if pressed && s.mods.alt_key() {
+                    if let Key::Character(c) = &event.logical_key {
+                        if let Some(n) = c.chars().next().and_then(|c| c.to_digit(10)) {
+                            let n = n as usize;
+                            if n >= 1 && n <= s.tabs.len() && n - 1 != s.active {
+                                s.tabs[s.active].hide();
+                                s.active = n - 1;
+                                s.tabs[s.active].show();
+                                log(format!("SWITCH to tab {n}"));
+                                s.window.request_redraw();
+                            }
+                            return;
                         }
                     }
                 }
-                if event.logical_key == Key::Named(NamedKey::Escape) {
-                    el.exit();
-                }
+                let key = match &event.logical_key {
+                    Key::Character(c) => servo::Key::Character(c.to_string()),
+                    Key::Named(n) => match n {
+                        NamedKey::Space => servo::Key::Character(" ".into()),
+                        NamedKey::Enter => servo::Key::Named(servo::NamedKey::Enter),
+                        NamedKey::Tab => servo::Key::Named(servo::NamedKey::Tab),
+                        NamedKey::Backspace => servo::Key::Named(servo::NamedKey::Backspace),
+                        NamedKey::Delete => servo::Key::Named(servo::NamedKey::Delete),
+                        NamedKey::Escape => servo::Key::Named(servo::NamedKey::Escape),
+                        NamedKey::ArrowLeft => servo::Key::Named(servo::NamedKey::ArrowLeft),
+                        NamedKey::ArrowRight => servo::Key::Named(servo::NamedKey::ArrowRight),
+                        NamedKey::ArrowUp => servo::Key::Named(servo::NamedKey::ArrowUp),
+                        NamedKey::ArrowDown => servo::Key::Named(servo::NamedKey::ArrowDown),
+                        NamedKey::Home => servo::Key::Named(servo::NamedKey::Home),
+                        NamedKey::End => servo::Key::Named(servo::NamedKey::End),
+                        NamedKey::PageUp => servo::Key::Named(servo::NamedKey::PageUp),
+                        NamedKey::PageDown => servo::Key::Named(servo::NamedKey::PageDown),
+                        NamedKey::Shift => servo::Key::Named(servo::NamedKey::Shift),
+                        NamedKey::Control => servo::Key::Named(servo::NamedKey::Control),
+                        NamedKey::Alt => servo::Key::Named(servo::NamedKey::Alt),
+                        _ => servo::Key::Named(servo::NamedKey::Unidentified),
+                    },
+                    _ => servo::Key::Named(servo::NamedKey::Unidentified),
+                };
+                let mut m = servo::Modifiers::empty();
+                if s.mods.shift_key() { m |= servo::Modifiers::SHIFT; }
+                if s.mods.control_key() { m |= servo::Modifiers::CONTROL; }
+                if s.mods.alt_key() { m |= servo::Modifiers::ALT; }
+                if s.mods.super_key() { m |= servo::Modifiers::META; }
+                let st = if pressed { servo::KeyState::Down } else { servo::KeyState::Up };
+                s.tabs[s.active].notify_input_event(InputEvent::Keyboard(servo::KeyboardEvent::new_without_event(
+                    st, key, servo::Code::Unidentified, servo::Location::Standard, m, event.repeat, false,
+                )));
             }
             _ => {}
         }
