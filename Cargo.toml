@@ -11,7 +11,7 @@ description = "Lightweight cross-platform browser: Slint UI, Servo engine, conta
 [features]
 default = []
 # Real Servo engine (huge build). Without it a stub engine is used so the UI can be developed quickly.
-servo = ["dep:servo", "dep:winit", "dep:rustls", "dep:dpi", "dep:url", "dep:euclid", "dep:zstd", "dep:lz4_flex"]
+servo = ["dep:servo", "dep:winit", "dep:rustls", "dep:dpi", "dep:url", "dep:euclid", "dep:zstd", "dep:lz4_flex","dep:serde_json"]
 
 # Extra Servo web features, for RAM/compat experiments
 webfx = ["servo", "servo/webcrypto", "servo/webgl", "servo/brotli-compression-stream", "servo/clipboard"]
@@ -25,6 +25,7 @@ servo = { version = "0.7", optional = true, default-features = false, features =
 euclid = { version = "0.22", optional = true }
 zstd = { version = "0.13", optional = true }
 lz4_flex = { version = "0.11", optional = true }
+serde_json = { version = "1", optional = true }
 dpi = { version = "0.1", optional = true }
 url = { version = "2", optional = true }
 winit = { version = "0.30", optional = true }

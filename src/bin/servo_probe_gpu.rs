@@ -89,6 +89,13 @@ impl EventLoopWaker for Waker {
 
 struct Delegate {
     window: Option<Rc<Window>>,
+    ctx: Option<Rc<dyn servo::RenderingContext>>,
+    spawned: Rc<RefCell<Vec<WebView>>>,
+}
+impl Delegate {
+    fn plain(window: Option<Rc<Window>>) -> Self {
+        Delegate { window, ctx: None, spawned: Rc::default() }
+    }
 }
 impl WebViewDelegate for Delegate {
     fn notify_new_frame_ready(&self, _: WebView) {
@@ -105,7 +112,18 @@ impl WebViewDelegate for Delegate {
     fn notify_crashed(&self, _: WebView, reason: String, bt: Option<String>) {
         log(format!("CRASH {reason} {bt:?}"));
     }
+    fn request_create_new(&self, _parent: WebView, request: servo::CreateNewWebViewRequest) {
+        let Some(ctx) = self.ctx.clone() else { return };
+        let delegate = Rc::new(Delegate { window: self.window.clone(), ctx: Some(ctx.clone()), spawned: self.spawned.clone() });
+        let wv = request.builder(ctx).delegate(delegate).build();
+        log("NEWTAB requested (window.open / target=_blank)".to_string());
+        self.spawned.borrow_mut().push(wv);
+    }
     fn show_console_message(&self, _: WebView, level: ConsoleLogLevel, m: String) {
+        if let Some(rest) = m.strip_prefix("CAIRN_DL:") {
+            save_download(rest);
+            return;
+        }
         if matches!(level, ConsoleLogLevel::Error | ConsoleLogLevel::Warn) {
             log(format!("CONSOLE {level:?} {}", m.chars().take(300).collect::<String>()));
         }
@@ -156,9 +174,59 @@ var oa = Element.prototype.setAttribute; Element.prototype.setAttribute = functi
 new MutationObserver(function(ms){ ms.forEach(function(m){ m.addedNodes.forEach(function(n){ if (n.tagName === 'IFRAME') console.error('IFRAME ['+tag()+'] src='+String(n.getAttribute('src')).slice(0,120)+' srcdoc='+(n.hasAttribute('srcdoc')?n.getAttribute('srcdoc').length:'no')+' sandbox='+n.getAttribute('sandbox')); }); }); }).observe(document, {childList:true, subtree:true});
 })();"#;
 
+const DOWNLOAD_HOOK: &str = r#"(function(){
+if (window !== window.top) return;
+var send = function(a){
+  var name = a.getAttribute('download') || 'download';
+  var href = a.href;
+  fetch(href).then(function(r){ return r.blob(); }).then(function(b){
+    var fr = new FileReader();
+    fr.onload = function(){ console.log('CAIRN_DL:' + JSON.stringify({name: name, mime: b.type, url: href.slice(0,80), data: String(fr.result).split(',')[1] || ''})); };
+    fr.readAsDataURL(b);
+  }).catch(function(e){ console.error('CAIRN_DL failed: ' + e); });
+};
+document.addEventListener('click', function(e){
+  var a = e.target && e.target.closest ? e.target.closest('a[download]') : null;
+  if (a && a.href) { e.preventDefault(); send(a); }
+}, true);
+if (!('download' in HTMLAnchorElement.prototype)) {
+  Object.defineProperty(HTMLAnchorElement.prototype, 'download', { get: function(){ return this.getAttribute('download') || ''; }, set: function(v){ this.setAttribute('download', String(v)); }, configurable: true });
+}
+var oc = HTMLAnchorElement.prototype.click;
+HTMLAnchorElement.prototype.click = function(){ if (this.hasAttribute('download') && this.href) { send(this); return; } return oc.call(this); };
+})();"#;
+
+fn save_download(json: &str) {
+    let v: serde_json::Value = match serde_json::from_str(json) { Ok(v) => v, Err(e) => { log(format!("DOWNLOAD bad json: {e}")); return; } };
+    let name: String = v["name"].as_str().unwrap_or("download").chars().filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_').collect();
+    let bytes = base64_decode(v["data"].as_str().unwrap_or(""));
+    let dir = std::env::current_dir().unwrap().join("cairn-probe-data").join("downloads");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(if name.is_empty() { "download".to_string() } else { name });
+    match std::fs::write(&path, &bytes) {
+        Ok(()) => log(format!("DOWNLOAD saved {} ({} bytes, mime {})", path.display(), bytes.len(), v["mime"].as_str().unwrap_or("?"))),
+        Err(e) => log(format!("DOWNLOAD write failed: {e}")),
+    }
+}
+
+fn base64_decode(s: &str) -> Vec<u8> {
+    let val = |c: u8| match c { b'A'..=b'Z' => Some(c - b'A'), b'a'..=b'z' => Some(c - b'a' + 26), b'0'..=b'9' => Some(c - b'0' + 52), b'+' => Some(62), b'/' => Some(63), _ => None };
+    let mut out = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        if let Some(v) = val(c) {
+            acc = (acc << 6) | v as u32;
+            bits += 6;
+            if bits >= 8 { bits -= 8; out.push((acc >> bits) as u8); acc &= (1 << bits) - 1; }
+        }
+    }
+    out
+}
+
 fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
     let m = Rc::new(servo::UserContentManager::new(servo));
     m.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
+    m.add_script(Rc::new(servo::UserScript::new(DOWNLOAD_HOOK.to_string(), None)));
     if std::env::var_os("CSPDEBUG").is_some() {
         m.add_script(Rc::new(servo::UserScript::new(CSP_DEBUG.to_string(), None)));
     }
@@ -192,7 +260,7 @@ impl ApplicationHandler<()> for App {
         log("RENDER MODE: window rendering context created (GPU if the driver is hardware; see glxinfo/eglinfo lines above)");
         let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).event_loop_waker(Box::new(self.waker.clone())).build();
         let scale = window.scale_factor() as f32;
-        let delegate = Rc::new(Delegate { window: Some(window.clone()) });
+        let delegate = Rc::new(Delegate::plain(Some(window.clone())));
         let ucm = user_content(&servo);
         let tabs: Vec<WebView> = self
             .urls
@@ -308,11 +376,14 @@ fn software_fallback(urls: &[String], secs: u64) {
     let servo = ServoBuilder::default().opts(opts()).preferences(prefs()).build();
     let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(w, h)).expect("software ctx"));
     let ucm = user_content(&servo);
+    let spawned: Rc<RefCell<Vec<WebView>>> = Rc::default();
+    let dctx: Rc<dyn servo::RenderingContext> = ctx.clone();
+    let mk_delegate = || Rc::new(Delegate { window: None, ctx: Some(dctx.clone()), spawned: spawned.clone() });
     let tabs: RefCell<Vec<WebView>> = RefCell::new(
         urls.iter()
             .enumerate()
             .map(|(i, u)| {
-                let wv = WebViewBuilder::new(&servo, ctx.clone()).user_content_manager(ucm.clone()).url(url::Url::parse(u).unwrap()).delegate(Rc::new(Delegate { window: None })).build();
+                let wv = WebViewBuilder::new(&servo, ctx.clone()).user_content_manager(ucm.clone()).url(url::Url::parse(u).unwrap()).delegate(mk_delegate()).build();
                 if i > 0 {
                     wv.hide();
                 }
@@ -347,6 +418,15 @@ fn software_fallback(urls: &[String], secs: u64) {
     };
     while t.elapsed() < limit {
         servo.spin_event_loop();
+        let fresh: Vec<WebView> = spawned.borrow_mut().drain(..).collect();
+        for wv in fresh {
+            for t in tabs.borrow().iter() {
+                t.hide();
+            }
+            wv.show();
+            tabs.borrow_mut().insert(0, wv);
+            log("NEWTAB active".to_string());
+        }
         tabs.borrow()[0].paint();
         if step < steps.len() && Instant::now() >= wait_until {
             let s = steps[step].clone();
