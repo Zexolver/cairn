@@ -152,8 +152,8 @@ impl WebViewDelegate for Delegate {
             save_download(rest);
             return;
         }
-        if matches!(level, ConsoleLogLevel::Error | ConsoleLogLevel::Warn) {
-            log(format!("CONSOLE {level:?} {}", m.chars().take(300).collect::<String>()));
+        if matches!(level, ConsoleLogLevel::Error | ConsoleLogLevel::Warn) || std::env::var_os("CFDEBUG").is_some() {
+            log(format!("CONSOLE {level:?} {}", m.chars().take(if std::env::var_os("CFDEBUG").is_some() { 3000 } else { 300 }).collect::<String>()));
         }
     }
 }
@@ -226,6 +226,22 @@ var uuid = function(){ var b = new Uint8Array(16); gv(b); b[6] = b[6] & 15 | 64;
 Object.defineProperty(globalThis, 'crypto', { value: { getRandomValues: gv, randomUUID: uuid, subtle: undefined }, configurable: true });
 })();"#;
 
+const CF_DEBUG: &str = r#"(function(){
+var tag = function(){ try { return location.href.slice(0,60); } catch(e) { return '?'; } };
+window.addEventListener('message', function(e){ var d=e.data, ev=''; try{ ev = (typeof d==='string'?d:JSON.stringify(d)).slice(0,(d&&d.cs)?1500:100);}catch(x){}
+ var rel=[]; try{ rel.push('src==self:'+(e.source===window)); rel.push('src==top:'+(e.source===window.top)); rel.push('src.parent==self:'+(e.source&&e.source.parent===window)); rel.push('nframes:'+window.length); for(var i=0;i<window.length;i++){ rel.push('f'+i+'==src:'+(window.frames[i]===e.source)); } }catch(x){ rel.push('err '+x); }
+ console.error('PM ['+tag()+'] from='+e.origin+' '+rel.join(' ')+' data='+ev); }, true);
+var oas = Element.prototype.attachShadow; Element.prototype.attachShadow = function(o){ console.error('SHADOW ['+tag()+'] mode='+(o&&o.mode)+' host='+this.tagName+'#'+this.id); return oas.call(this,o); };
+['appendChild','insertBefore'].forEach(function(n){ var o=Node.prototype[n]; Node.prototype[n]=function(a){ try{ if(a && a.tagName==='IFRAME') console.error('IFRAME-ADD ['+tag()+'] via '+n+' into '+(this.nodeName)+' src='+String(a.src).slice(0,150)+' sandbox='+a.getAttribute('sandbox')+' style='+a.getAttribute('style')); }catch(x){} return o.apply(this,arguments); }; });
+window.addEventListener('error',function(e){ console.error('ONERROR ['+tag()+'] '+e.message+' @'+String(e.filename).slice(0,80)+':'+e.lineno); },true);
+window.addEventListener('unhandledrejection',function(e){ console.error('UNHANDLED ['+tag()+'] '+String(e.reason&&(e.reason.stack||e.reason)).slice(0,300)); });
+try{ var of=window.fetch; window.fetch=function(u,o){ var url=String(u&&u.url||u).slice(0,140); return of.apply(this,arguments).then(function(r){ console.error('FETCH ['+tag()+'] '+url+' -> '+r.status); return r; },function(er){ console.error('FETCH-FAIL ['+tag()+'] '+url+' '+er); throw er; }); }; }catch(x){}
+try{ var ox=XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open=function(m,u){ console.error('XHR ['+tag()+'] '+m+' '+String(u).slice(0,140)); this.addEventListener('loadend',function(){ console.error('XHR-END '+String(u).slice(0,100)+' -> '+this.status); }); return ox.apply(this,arguments); }; }catch(x){}
+try{ var OW=window.Worker; window.Worker=function(u,o){ console.error('WORKER ['+tag()+'] '+String(u).slice(0,100)); var w=new OW(u,o); w.addEventListener('error',function(e){ console.error('WORKER-ERR '+e.message); }); return w; }; window.Worker.prototype=OW.prototype; }catch(x){}
+try{ ['instantiate','compile'].forEach(function(n){ var o=WebAssembly[n]; WebAssembly[n]=function(){ console.error('WASM.'+n+' ['+tag()+']'); return o.apply(this,arguments).catch(function(e){ console.error('WASM-FAIL '+n+' '+e); throw e; }); }; }); }catch(x){}
+var cc = document.createElement; document.createElement = function(t){ var el = cc.apply(document, arguments); if (String(t).toLowerCase()==='iframe') console.error('IFRAME-CREATE ['+tag()+']'); return el; };
+})();"#;
+
 const CSP_DEBUG: &str = r#"(function(){
 var tag = function(){ try { return location.href.slice(0,70); } catch(e) { return '?'; } };
 document.addEventListener('securitypolicyviolation', function(e){ console.error('CSPV ['+tag()+'] blocked='+e.blockedURI+' dir='+e.violatedDirective+' policy='+e.originalPolicy); });
@@ -289,6 +305,9 @@ fn user_content(servo: &Servo) -> Rc<servo::UserContentManager> {
     let m = Rc::new(servo::UserContentManager::new(servo));
     m.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
     m.add_script(Rc::new(servo::UserScript::new(DOWNLOAD_HOOK.to_string(), None)));
+    if std::env::var_os("CFDEBUG").is_some() {
+        m.add_script(Rc::new(servo::UserScript::new(CF_DEBUG.to_string(), None)));
+    }
     if std::env::var_os("CSPDEBUG").is_some() {
         m.add_script(Rc::new(servo::UserScript::new(CSP_DEBUG.to_string(), None)));
     }
