@@ -153,7 +153,7 @@ impl Workspace {
         }
     }
 
-    fn prune_groups(&mut self) {
+    pub fn prune_groups(&mut self) {
         let used: Vec<GroupId> = self.tabs.iter().filter_map(|t| t.group).collect();
         self.groups.retain(|g| used.contains(&g.id));
     }

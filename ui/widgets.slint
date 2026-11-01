@@ -1,0 +1,141 @@
+import { Pal } from "theme.slint";
+
+export component IconButton inherits Rectangle {
+    in property <string> glyph;
+    in property <length> size: 36px;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <color> tint: Pal.text;
+    callback clicked();
+    width: size;
+    height: size;
+    border-radius: 8px;
+    background: active ? Pal.surface-hi : (ta.has-hover && enabled ? Pal.surface-hi : transparent);
+    opacity: enabled ? 1 : 0.35;
+    Text { text: root.glyph; color: root.tint; font-size: root.size * 0.5; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+export component Chip inherits Rectangle {
+    in property <string> label;
+    in property <color> accent: Pal.accent;
+    in property <bool> selected;
+    in property <bool> closable: false;
+    in property <length> chip-height: 32px;
+    in property <length> max-chip-width: 190px;
+    callback clicked();
+    callback closed();
+    height: chip-height;
+    min-width: 56px;
+    max-width: max-chip-width;
+    border-radius: 8px;
+    background: selected ? Pal.surface : (ta.has-hover ? Pal.surface-hi : transparent);
+    border-width: 1px;
+    border-color: selected ? accent : Pal.border;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: closable ? 4px : 10px;
+        spacing: 4px;
+        Text { text: root.label; color: Pal.text; vertical-alignment: center; overflow: elide; }
+        if root.closable: Rectangle {
+            width: root.chip-height - 8px;
+            height: root.chip-height - 8px;
+            y: 4px;
+            border-radius: 6px;
+            background: xa.has-hover ? Pal.surface-hi : transparent;
+            Text { text: "×"; color: Pal.subtext; horizontal-alignment: center; vertical-alignment: center; }
+            xa := TouchArea { clicked => { root.closed(); } }
+        }
+    }
+}
+
+export component Pill inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 40px;
+    min-width: 80px;
+    border-radius: 20px;
+    background: selected ? Pal.accent : (ta.has-hover ? Pal.surface-hi : Pal.surface);
+    border-width: 1px;
+    border-color: selected ? Pal.accent : Pal.border;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.label;
+        color: selected ? #ffffff : (danger ? Pal.danger : Pal.text);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+export component Heading inherits Text {
+    color: Pal.text;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+export component Caption inherits Text {
+    color: Pal.subtext;
+    font-size: 13px;
+    wrap: word-wrap;
+}
+
+export component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in property <length> field-height: 40px;
+    callback accepted(string);
+    callback edited(string);
+    height: field-height;
+    border-radius: 8px;
+    background: Pal.surface;
+    border-width: 1px;
+    border-color: ti.has-focus ? Pal.accent : Pal.border;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        ti := TextInput {
+            text <=> root.text;
+            enabled: root.enabled;
+            color: Pal.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            single-line: true;
+            selection-background-color: Pal.accent;
+            accepted => { root.accepted(self.text); }
+            edited => { root.edited(self.text); }
+        }
+    }
+    if root.text == "" && !ti.has-focus: Text {
+        x: 10px;
+        text: root.placeholder;
+        color: Pal.subtext;
+        font-size: 14px;
+        vertical-alignment: center;
+    }
+}
+
+export component Toggle inherits Rectangle {
+    in-out property <bool> checked;
+    callback toggled(bool);
+    width: 46px;
+    height: 26px;
+    border-radius: 13px;
+    background: checked ? Pal.accent : Pal.surface-hi;
+    border-width: 1px;
+    border-color: Pal.border;
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 3px : 3px;
+        y: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: #ffffff;
+        animate x { duration: 120ms; }
+    }
+    TouchArea { clicked => { root.checked = !root.checked; root.toggled(root.checked); } }
+}

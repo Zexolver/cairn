@@ -1,0 +1,15 @@
+import { Palette } from "std-widgets.slint";
+
+export global Pal {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    out property <color> bg: dark ? #16161e : #eceef4;
+    out property <color> bar: dark ? #1a1b26 : #f7f8fb;
+    out property <color> surface: dark ? #24283b : #ffffff;
+    out property <color> surface-hi: dark ? #2f3450 : #e4e7f1;
+    out property <color> border: dark ? #343a55 : #cfd3e2;
+    out property <color> text: dark ? #c0caf5 : #1f2335;
+    out property <color> subtext: dark ? #7f88b3 : #5c6389;
+    out property <color> accent: dark ? #7aa2f7 : #3b5bdb;
+    out property <color> good: dark ? #9ece6a : #2f9e44;
+    out property <color> danger: dark ? #f7768e : #d6336c;
+}

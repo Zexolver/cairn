@@ -79,6 +79,11 @@ impl Default for Settings {
     }
 }
 
+pub fn host_of(url: &str) -> Option<String> {
+    let h = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    Some(h.trim_start_matches("www.").to_string())
+}
+
 impl Settings {
     pub fn search_template(&self) -> &'static str {
         engine_by_id(&self.search_engine).template

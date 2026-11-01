@@ -1,154 +1,176 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
+import { Pal } from "theme.slint";
+import { Chip, IconButton, Pill, Caption, Field } from "widgets.slint";
+import { AppData, Logic, Page, ContainerRow, TabRow, GroupRow, HistoryRow, BookmarkRow, FolderRow, RuleRow } from "data.slint";
+import { SettingsPage, HistoryPage, BookmarksPage, TabOptionsPage } from "pages.slint";
 
-export struct ContainerRow { id: int, name: string, color: color, tabs: int, selected: bool }
-export struct TabRow { id: int, title: string, color: color, selected: bool, loading: bool }
+export { Palette, AppData, Logic, Page, ContainerRow, TabRow, GroupRow, HistoryRow, BookmarkRow, FolderRow, RuleRow }
 
-export global AppData {
-    in property <[ContainerRow]> containers;
-    in property <[TabRow]> tabs;
-    in property <image> frame;
-    in property <string> url;
-    in property <string> status;
-    in property <bool> has-tab;
-    in property <int> blocked-count;
-}
-
-export global Logic {
-    callback select-container(int);
-    callback add-container(string);
-    callback select-tab(int);
-    callback close-tab(int);
-    callback new-tab();
-    callback navigate(string);
-    callback back();
-    callback forward();
-    callback reload();
-    callback viewport-resized(length, length);
-    callback pointer-moved(length, length);
-    callback pointer-pressed(length, length, int);
-    callback pointer-released(length, length, int);
-    callback scrolled(length, length, length, length);
-    callback key-event(string, bool);
-}
-
-component Chip inherits Rectangle {
+component MenuItem inherits Rectangle {
+    in property <string> glyph;
     in property <string> label;
-    in property <color> accent;
-    in property <bool> selected;
+    in property <bool> enabled: true;
     callback clicked();
-    callback closed();
-    in property <bool> closable: false;
-    height: 30px;
-    min-width: 70px;
-    max-width: 180px;
-    border-radius: 6px;
-    background: selected ? #2a2e3f : #1a1b26;
-    border-width: 1px;
-    border-color: selected ? accent : #2a2e3f;
-    TouchArea { clicked => { root.clicked(); } }
+    height: 48px;
+    opacity: enabled ? 1 : 0.4;
+    background: ta.has-hover && enabled ? Pal.surface-hi : transparent;
+    border-radius: 8px;
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 6px;
-        spacing: 6px;
-        Text { text: root.label; color: #c0caf5; vertical-alignment: center; overflow: elide; }
-        if root.closable: Rectangle {
-            width: 18px;
-            height: 18px;
-            vertical-stretch: 0;
-            border-radius: 9px;
-            background: ta.has-hover ? #3b4261 : transparent;
-            Text { text: "×"; color: #c0caf5; horizontal-alignment: center; vertical-alignment: center; }
-            ta := TouchArea { clicked => { root.closed(); } }
-        }
+        padding-left: 12px;
+        spacing: 12px;
+        Text { text: root.glyph; color: Pal.accent; vertical-alignment: center; width: 24px; horizontal-alignment: center; }
+        Text { text: root.label; color: Pal.text; vertical-alignment: center; }
+    }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+component UrlBar inherits Rectangle {
+    in property <length> bar-height: 40px;
+    height: bar-height;
+    border-radius: bar-height / 2;
+    background: Pal.surface;
+    border-width: 1px;
+    border-color: field.has-focus ? Pal.accent : Pal.border;
+    callback accepted(string);
+    property <bool> has-focus: field.has-focus;
+    field := TextInput {
+        x: 14px;
+        width: parent.width - 54px;
+        text: AppData.url;
+        enabled: AppData.has-tab;
+        color: Pal.text;
+        font-size: 14px;
+        vertical-alignment: center;
+        single-line: true;
+        selection-background-color: Pal.accent;
+        accepted => { root.accepted(self.text); self.clear-focus(); }
+    }
+    if AppData.url == "" && !field.has-focus: Text {
+        x: 14px;
+        text: "Search or enter address";
+        color: Pal.subtext;
+        font-size: 14px;
+        vertical-alignment: center;
+    }
+    IconButton {
+        x: parent.width - self.width - 2px;
+        y: (parent.height - self.height) / 2;
+        size: root.bar-height - 6px;
+        glyph: AppData.bookmarked ? "★" : "☆";
+        tint: AppData.bookmarked ? Pal.accent : Pal.subtext;
+        enabled: AppData.has-tab;
+        clicked => { Logic.toggle-bookmark(); }
     }
 }
 
-component IconButton inherits Rectangle {
-    in property <string> glyph;
-    callback clicked();
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    background: ta.has-hover ? #2a2e3f : transparent;
-    Text { text: root.glyph; color: #c0caf5; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
-    ta := TouchArea { clicked => { root.clicked(); } }
+component TabStrip inherits Flickable {
+    in property <length> strip-height: 36px;
+    height: strip-height;
+    viewport-width: row.preferred-width;
+    row := HorizontalLayout {
+        spacing: 4px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        for t in AppData.tabs: Chip {
+            chip-height: root.strip-height - 4px;
+            accent: t.group-color;
+            selected: t.selected;
+            closable: t.kind == 0;
+            label: t.kind == 1 ? ((t.collapsed ? "▸ " : "▾ ") + t.title) : ((t.loading ? "… " : "") + t.title);
+            clicked => { if t.kind == 1 { Logic.toggle-group(t.id); } else { Logic.select-tab(t.id); } }
+            closed => { Logic.close-tab(t.id); }
+        }
+        IconButton { glyph: "+"; size: root.strip-height - 4px; clicked => { Logic.new-tab(); } }
+    }
+}
+
+component ContainerStrip inherits Flickable {
+    in property <length> strip-height: 36px;
+    height: strip-height;
+    viewport-width: row.preferred-width;
+    row := HorizontalLayout {
+        spacing: 6px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        for c in AppData.containers: Chip {
+            chip-height: root.strip-height - 4px;
+            label: c.name + " · " + c.tabs;
+            accent: c.color;
+            selected: c.selected;
+            clicked => { Logic.select-container(c.id); }
+        }
+    }
 }
 
 export component MainWindow inherits Window {
     title: "Cairn";
     preferred-width: 1100px;
     preferred-height: 760px;
-    min-width: 320px;
-    min-height: 400px;
-    background: #16161e;
+    min-width: 280px;
+    min-height: 240px;
+    background: Pal.bg;
 
+    property <bool> phone: self.width < 600px;
+    property <bool> short: self.height < 500px;
+    property <bool> compact: phone || short;
+    property <bool> switcher-open: false;
+    property <bool> menu-open: false;
+    property <length> bar-h: compact ? 44px : 40px;
+
+    Rectangle {
+      x: 0px;
+      y: 0px;
+      width: root.width;
+      height: root.height;
     VerticalLayout {
-        // Containers row
-        Rectangle {
-            height: 42px;
+        // desktop / tablet header
+        if !compact: Rectangle {
             vertical-stretch: 0;
-            background: #16161e;
-            HorizontalLayout {
+            background: Pal.bar;
+            VerticalLayout {
                 padding: 6px;
-                spacing: 6px;
-                alignment: start;
-                for c in AppData.containers: Chip {
-                    label: c.name + " · " + c.tabs;
-                    accent: c.color;
-                    selected: c.selected;
-                    clicked => { Logic.select-container(c.id); }
-                }
-                IconButton { glyph: "+"; vertical-stretch: 0; clicked => { new-container.visible = !new-container.visible; } }
-                new-container := LineEdit {
-                    visible: false;
-                    placeholder-text: "New container name";
-                    width: 180px;
-                    vertical-stretch: 0;
-                    accepted(t) => { Logic.add-container(t); self.text = ""; self.visible = false; }
+                padding-bottom: 2px;
+                spacing: 2px;
+                ContainerStrip { }
+                TabStrip { }
+                HorizontalLayout {
+                    spacing: 4px;
+                    padding-top: 2px;
+                    height: 44px;
+                    IconButton { glyph: "←"; size: 38px; clicked => { Logic.back(); } }
+                    IconButton { glyph: "→"; size: 38px; clicked => { Logic.forward(); } }
+                    IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: 38px; clicked => { Logic.reload(); } }
+                    UrlBar { accepted(t) => { Logic.navigate(t); } y: 0px; bar-height: 38px; }
+                    if AppData.show-shield: Text { text: "🛡 " + AppData.blocked-count; color: Pal.good; vertical-alignment: center; }
+                    IconButton { glyph: "☰"; size: 38px; active: root.menu-open; clicked => { root.menu-open = !root.menu-open; } }
                 }
             }
         }
-        // Tabs row
-        Rectangle {
-            height: 42px;
+        // compact top bar
+        if compact: Rectangle {
             vertical-stretch: 0;
-            background: #1a1b26;
+            background: Pal.bar;
+            height: root.bar-h + 8px;
             HorizontalLayout {
-                padding: 6px;
+                padding: 4px;
                 spacing: 4px;
-                alignment: start;
-                for t in AppData.tabs: Chip {
-                    label: (t.loading ? "… " : "") + t.title;
-                    accent: t.color;
-                    selected: t.selected;
-                    closable: true;
-                    clicked => { Logic.select-tab(t.id); }
-                    closed => { Logic.close-tab(t.id); }
+                if root.short: IconButton { glyph: "←"; size: root.bar-h; clicked => { Logic.back(); } }
+                if root.short: IconButton { glyph: "→"; size: root.bar-h; clicked => { Logic.forward(); } }
+                UrlBar { accepted(t) => { Logic.navigate(t); } bar-height: root.bar-h; }
+                if root.short: IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: root.bar-h; clicked => { Logic.reload(); } }
+                if !root.phone || root.short: Rectangle {
+                    width: root.bar-h;
+                    height: root.bar-h;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Pal.border;
+                    Text { text: AppData.tab-count; color: Pal.text; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.switcher-open = true; } }
                 }
-                IconButton { glyph: "+"; vertical-stretch: 0; clicked => { Logic.new-tab(); } }
+                if root.short: IconButton { glyph: "☰"; size: root.bar-h; clicked => { root.menu-open = !root.menu-open; } }
+                if root.phone && !root.short && AppData.show-shield: Text { text: "🛡" + AppData.blocked-count; color: Pal.good; vertical-alignment: center; font-size: 12px; }
             }
         }
-        // Toolbar
-        Rectangle {
-            height: 44px;
-            vertical-stretch: 0;
-            background: #1a1b26;
-            HorizontalLayout {
-                padding: 6px;
-                spacing: 4px;
-                IconButton { glyph: "←"; clicked => { Logic.back(); } }
-                IconButton { glyph: "→"; clicked => { Logic.forward(); } }
-                IconButton { glyph: "⟳"; clicked => { Logic.reload(); } }
-                LineEdit {
-                    text: AppData.url;
-                    placeholder-text: "Search or enter address";
-                    enabled: AppData.has-tab;
-                    accepted(t) => { Logic.navigate(t); }
-                }
-                Text { text: "🛡 " + AppData.blocked-count; color: #9ece6a; vertical-alignment: center; }
-            }
-        }
-        // Page area
         content := Rectangle {
             background: #ffffff;
             clip: true;
@@ -163,11 +185,14 @@ export component MainWindow inherits Window {
                 image-fit: fill;
                 visible: AppData.has-tab;
             }
-            if !AppData.has-tab: Text {
-                text: AppData.status;
-                color: #565f89;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            if !AppData.has-tab: Rectangle {
+                background: Pal.bg;
+                Text {
+                    text: AppData.status;
+                    color: Pal.subtext;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
             fs := FocusScope {
                 capture-key-pressed(e) => { Logic.key-event(e.text, true); accept }
@@ -189,5 +214,123 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        // phone bottom bar
+        if root.phone && !root.short: Rectangle {
+            vertical-stretch: 0;
+            height: 52px;
+            background: Pal.bar;
+            HorizontalLayout {
+                padding: 4px;
+                IconButton { glyph: "←"; size: 44px; horizontal-stretch: 1; clicked => { Logic.back(); } }
+                IconButton { glyph: "→"; size: 44px; horizontal-stretch: 1; clicked => { Logic.forward(); } }
+                IconButton { glyph: AppData.loading ? "✕" : "⟳"; size: 44px; horizontal-stretch: 1; clicked => { Logic.reload(); } }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 7px;
+                        border-width: 2px;
+                        border-color: Pal.text;
+                        Text { text: AppData.tab-count; color: Pal.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    TouchArea { clicked => { root.switcher-open = true; } }
+                }
+                IconButton { glyph: "☰"; size: 44px; horizontal-stretch: 1; clicked => { root.menu-open = !root.menu-open; } }
+            }
+        }
     }
+
+    }
+
+    // pages
+    if AppData.page == Page.settings: SettingsPage { x: 0; y: 0; width: root.width; height: root.height; narrow: root.phone; }
+    if AppData.page == Page.history: HistoryPage { x: 0; y: 0; width: root.width; height: root.height; narrow: root.phone; }
+    if AppData.page == Page.bookmarks: BookmarksPage { x: 0; y: 0; width: root.width; height: root.height; narrow: root.phone; }
+    if AppData.page == Page.tab-options: TabOptionsPage { x: 0; y: 0; width: root.width; height: root.height; narrow: root.phone; }
+
+    // menu (bottom sheet on phone, dropdown on desktop)
+    if root.menu-open && AppData.page == Page.web: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        TouchArea { clicked => { root.menu-open = false; } }
+        Rectangle {
+            property <length> w: root.phone ? root.width : 260px;
+            width: w;
+            height: min(root.height - 8px, 5 * 48px + 16px);
+            x: root.phone ? 0px : root.width - w - 8px;
+            y: root.phone ? root.height - self.height : 56px;
+            background: Pal.surface;
+            border-width: 1px;
+            border-color: Pal.border;
+            border-radius: 12px;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000066;
+            VerticalLayout {
+                padding: 8px;
+                MenuItem { glyph: "+"; label: "New tab"; clicked => { root.menu-open = false; Logic.new-tab(); } }
+                MenuItem { glyph: "⚙"; label: "Tab options & site rule"; enabled: AppData.has-tab; clicked => { root.menu-open = false; AppData.page = Page.tab-options; } }
+                MenuItem { glyph: "★"; label: "Bookmarks"; clicked => { root.menu-open = false; Logic.open-folder(0); AppData.page = Page.bookmarks; } }
+                MenuItem { glyph: "↺"; label: "History"; clicked => { root.menu-open = false; Logic.history-query(""); AppData.page = Page.history; } }
+                MenuItem { glyph: "⚙"; label: "Settings"; clicked => { root.menu-open = false; AppData.page = Page.settings; } }
+            }
+        }
+    }
+
+    // tab switcher (compact layouts)
+    if root.switcher-open && AppData.page == Page.web: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        background: Pal.bg;
+        TouchArea { }
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+            HorizontalLayout {
+                spacing: 8px;
+                height: 44px;
+                IconButton { glyph: "←"; size: 44px; clicked => { root.switcher-open = false; } }
+                ContainerStrip { strip-height: 44px; horizontal-stretch: 1; }
+                IconButton { glyph: "+"; size: 44px; clicked => { root.switcher-open = false; Logic.new-tab(); } }
+            }
+            ScrollView {
+                viewport-width: self.width;
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    if AppData.tabs.length == 0: Caption { text: "No tabs in this container."; }
+                    for t in AppData.tabs: Rectangle {
+                        height: t.kind == 1 ? 40px : 56px;
+                        border-radius: 8px;
+                        background: t.selected ? Pal.surface-hi : Pal.surface;
+                        border-width: t.grouped ? 2px : 0px;
+                        border-color: t.group-color;
+                        HorizontalLayout {
+                            padding-left: t.grouped ? 16px : 12px;
+                            Text {
+                                text: t.kind == 1 ? ((t.collapsed ? "▸ " : "▾ ") + t.title) : t.title;
+                                color: t.kind == 1 ? Pal.subtext : Pal.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if t.kind == 0: IconButton { glyph: "×"; size: 44px; y: 6px; tint: Pal.subtext; clicked => { Logic.close-tab(t.id); } }
+                        }
+                        TouchArea {
+                            width: parent.width - (t.kind == 0 ? 50px : 0px);
+                            clicked => {
+                                if t.kind == 1 { Logic.toggle-group(t.id); } else { Logic.select-tab(t.id); root.switcher-open = false; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // keep overlays closed on page change
+    changed width => { if !compact { root.switcher-open = false; } }
 }

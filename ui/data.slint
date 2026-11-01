@@ -1,0 +1,81 @@
+export enum Page { web, settings, bookmarks, history, tab-options }
+
+export struct ContainerRow { id: int, name: string, color: color, tabs: int, selected: bool }
+// kind 0 = tab, 1 = group header
+export struct TabRow { kind: int, id: int, title: string, color: color, selected: bool, loading: bool, group-color: color, grouped: bool, collapsed: bool }
+export struct GroupRow { id: int, name: string, color: color, selected: bool }
+export struct HistoryRow { title: string, url: string }
+export struct BookmarkRow { title: string, url: string, folder-id: int, is-folder: bool }
+export struct FolderRow { id: int, name: string, selected: bool }
+export struct RuleRow { host: string, container: string }
+
+export global AppData {
+    in-out property <Page> page: Page.web;
+    in property <[ContainerRow]> containers;
+    in property <[TabRow]> tabs;
+    in property <[GroupRow]> groups;
+    in property <[FolderRow]> folders;
+    in property <[HistoryRow]> history;
+    in property <[BookmarkRow]> bookmarks;
+    in property <[RuleRow]> rules;
+    in property <[string]> engines;
+    in property <image> frame;
+    in property <string> url;
+    in property <string> host;
+    in property <string> status;
+    in property <string> folder-path;
+    in property <bool> has-tab;
+    in property <bool> bookmarked;
+    in property <bool> has-rule;
+    in property <bool> loading;
+    in property <int> blocked-count;
+    in property <int> tab-count;
+    in property <int> theme;
+    in property <int> engine;
+    in property <string> homepage;
+    in property <bool> block-ads;
+    in property <bool> show-shield;
+    in property <bool> save-history;
+}
+
+export global Logic {
+    callback select-container(int);
+    callback add-container(string);
+    callback delete-container(int);
+    callback select-tab(int);
+    callback close-tab(int);
+    callback new-tab();
+    callback navigate(string);
+    callback open-url(string, bool);
+    callback back();
+    callback forward();
+    callback reload();
+    callback refresh();
+    callback toggle-bookmark();
+    callback viewport-resized(length, length);
+    callback pointer-moved(length, length);
+    callback pointer-pressed(length, length, int);
+    callback pointer-released(length, length, int);
+    callback scrolled(length, length, length, length);
+    callback key-event(string, bool);
+    callback toggle-group(int);
+    callback set-tab-group(int);
+    callback new-group(string);
+    callback move-tab(int);
+    callback set-rule(int);
+    callback remove-rule(string);
+    callback bookmark-in(int);
+    callback add-folder(string);
+    callback open-folder(int);
+    callback folder-up();
+    callback remove-bookmark(string, int);
+    callback remove-folder(int);
+    callback history-query(string);
+    callback clear-history();
+    callback set-theme(int);
+    callback set-engine(int);
+    callback set-homepage(string);
+    callback set-block-ads(bool);
+    callback set-show-shield(bool);
+    callback set-save-history(bool);
+}

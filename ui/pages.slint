@@ -1,0 +1,286 @@
+import { ScrollView } from "std-widgets.slint";
+import { Pal } from "theme.slint";
+import { Chip, Pill, Heading, Caption, Field, Toggle, IconButton } from "widgets.slint";
+import { AppData, Logic, Page } from "data.slint";
+
+component Row inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> removable: true;
+    in property <bool> folder: false;
+    callback clicked();
+    callback removed();
+    height: 56px;
+    border-radius: 8px;
+    background: ta.has-hover ? Pal.surface-hi : Pal.surface;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 4px;
+        spacing: 10px;
+        if root.folder: Text { text: "📁"; vertical-alignment: center; }
+        VerticalLayout {
+            alignment: center;
+            Text { text: root.title; color: Pal.text; overflow: elide; font-size: 14px; }
+            if root.subtitle != "": Text { text: root.subtitle; color: Pal.subtext; overflow: elide; font-size: 12px; }
+        }
+        if root.removable: IconButton { glyph: "×"; size: 44px; y: 6px; tint: Pal.subtext; clicked => { root.removed(); } }
+    }
+}
+
+component Section inherits VerticalLayout {
+    in property <string> title;
+    spacing: 8px;
+    Text { text: root.title; color: Pal.subtext; font-size: 12px; font-weight: 700; }
+    @children
+}
+
+component PageFrame inherits Rectangle {
+    in property <string> title;
+    in property <bool> narrow;
+    background: Pal.bg;
+    VerticalLayout {
+        padding: narrow ? 12px : 24px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 8px;
+            IconButton { glyph: "←"; size: 40px; clicked => { AppData.page = Page.web; } }
+            Heading { text: root.title; vertical-alignment: center; }
+        }
+        @children
+    }
+}
+
+component SettingsBody inherits VerticalLayout {
+    in property <int> cat;
+    spacing: 18px;
+    alignment: start;
+    if cat == 0: VerticalLayout {
+        spacing: 18px;
+        Section {
+            title: "APPEARANCE";
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Pill { label: "System"; selected: AppData.theme == 0; clicked => { Logic.set-theme(0); } }
+                Pill { label: "Light"; selected: AppData.theme == 1; clicked => { Logic.set-theme(1); } }
+                Pill { label: "Dark"; selected: AppData.theme == 2; clicked => { Logic.set-theme(2); } }
+            }
+            Caption { text: "System follows your device's light/dark setting."; }
+        }
+        Section {
+            title: "HOME PAGE";
+            Field { text: AppData.homepage; placeholder: "about:blank"; accepted(t) => { Logic.set-homepage(t); } }
+            Caption { text: "Opened by new tabs. Press Enter to save."; }
+        }
+    }
+    if cat == 1: Section {
+        title: "DEFAULT SEARCH ENGINE";
+        VerticalLayout {
+            spacing: 8px;
+            for e[i] in AppData.engines: Pill { label: e; selected: i == AppData.engine; clicked => { Logic.set-engine(i); } }
+        }
+        Caption { text: "Brave Search may ask you to verify you're not a bot; it offers a traditional CAPTCHA as a fallback. DuckDuckGo Lite uses the least JavaScript."; }
+    }
+    if cat == 2: VerticalLayout {
+        spacing: 18px;
+        Section {
+            title: "CONTENT BLOCKING";
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Block ads and trackers"; color: Pal.text; vertical-alignment: center; horizontal-stretch: 1; }
+                Toggle { checked: AppData.block-ads; toggled(v) => { Logic.set-block-ads(v); } }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Show blocked-count in toolbar"; color: Pal.text; vertical-alignment: center; horizontal-stretch: 1; }
+                Toggle { checked: AppData.show-shield; toggled(v) => { Logic.set-show-shield(v); } }
+            }
+        }
+        Section {
+            title: "HISTORY";
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Remember browsing history"; color: Pal.text; vertical-alignment: center; horizontal-stretch: 1; }
+                Toggle { checked: AppData.save-history; toggled(v) => { Logic.set-save-history(v); } }
+            }
+            HorizontalLayout { alignment: start; Pill { label: "Clear history"; danger: true; clicked => { Logic.clear-history(); } } }
+        }
+    }
+    if cat == 3: VerticalLayout {
+        spacing: 18px;
+        Section {
+            title: "CONTAINERS";
+            for c in AppData.containers: Row {
+                title: c.name;
+                subtitle: c.tabs + " tab(s)";
+                removable: AppData.containers.length > 1;
+                removed => { Logic.delete-container(c.id); }
+            }
+            Field { placeholder: "New container name — press Enter"; accepted(t) => { Logic.add-container(t); } }
+        }
+        Section {
+            title: "SITE RULES";
+            if AppData.rules.length == 0: Caption { text: "No rules. Use the menu → Tab options → \"Always open this site in…\"."; }
+            for r in AppData.rules: Row {
+                title: r.host;
+                subtitle: "always opens in " + r.container;
+                removed => { Logic.remove-rule(r.host); }
+            }
+        }
+    }
+}
+
+export component SettingsPage inherits PageFrame {
+    title: "Settings";
+    property <int> cat: 0;
+    property <[string]> cats: ["General", "Search", "Privacy & security", "Containers"];
+    if !root.narrow: HorizontalLayout {
+        padding-left: 24px;
+        padding-right: 24px;
+        padding-bottom: 24px;
+        spacing: 24px;
+        VerticalLayout {
+            width: 200px;
+            spacing: 4px;
+            alignment: start;
+            for c[i] in cats: Rectangle {
+                height: 40px;
+                border-radius: 8px;
+                background: i == cat ? Pal.surface : (ca.has-hover ? Pal.surface-hi : transparent);
+                Text { x: 12px; text: c; color: i == cat ? Pal.accent : Pal.text; vertical-alignment: center; font-weight: i == cat ? 700 : 400; }
+                ca := TouchArea { clicked => { cat = i; } }
+            }
+        }
+        body-wide := ScrollView {
+            viewport-width: self.width;
+            SettingsBody { cat: root.cat; width: body-wide.width; }
+        }
+    }
+    if root.narrow: VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-bottom: 12px;
+        spacing: 10px;
+        Flickable {
+            height: 40px;
+            viewport-width: chips.preferred-width;
+            chips := HorizontalLayout {
+                spacing: 6px;
+                for c[i] in cats: Pill { label: c; selected: i == cat; min-width: 110px; clicked => { cat = i; } }
+            }
+        }
+        body-narrow := ScrollView {
+            viewport-width: self.width;
+            SettingsBody { cat: root.cat; width: body-narrow.width; }
+        }
+    }
+}
+
+export component HistoryPage inherits PageFrame {
+    title: "History";
+    VerticalLayout {
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            Field { placeholder: "Search history"; edited(t) => { Logic.history-query(t); } }
+            Pill { label: "Clear"; danger: true; min-width: 70px; clicked => { Logic.clear-history(); } }
+        }
+        ScrollView {
+            viewport-width: self.width;
+            VerticalLayout {
+                spacing: 4px;
+                alignment: start;
+                if AppData.history.length == 0: Caption { text: "No history yet."; }
+                for h in AppData.history: Row { title: h.title == "" ? h.url : h.title; subtitle: h.url; removable: false; clicked => { Logic.open-url(h.url, false); } }
+            }
+        }
+    }
+}
+
+export component BookmarksPage inherits PageFrame {
+    title: "Bookmarks";
+    VerticalLayout {
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            Pill { label: "↑ " + AppData.folder-path; min-width: 120px; horizontal-stretch: 0; clicked => { Logic.folder-up(); } }
+            Field { placeholder: "New folder — press Enter"; accepted(t) => { Logic.add-folder(t); } }
+        }
+        ScrollView {
+            viewport-width: self.width;
+            VerticalLayout {
+                spacing: 4px;
+                alignment: start;
+                if AppData.bookmarks.length == 0: Caption { text: "Nothing here. Use the ☆ button in the toolbar to bookmark a page."; }
+                for b in AppData.bookmarks: Row {
+                    title: b.title;
+                    subtitle: b.is-folder ? "" : b.url;
+                    folder: b.is-folder;
+                    clicked => { if b.is-folder { Logic.open-folder(b.folder-id); } else { Logic.open-url(b.url, false); } }
+                    removed => { if b.is-folder { Logic.remove-folder(b.folder-id); } else { Logic.remove-bookmark(b.url, b.folder-id); } }
+                }
+            }
+        }
+    }
+}
+
+export component TabOptionsPage inherits PageFrame {
+    title: "Tab options";
+    ScrollView {
+        viewport-width: self.width;
+        VerticalLayout {
+            spacing: 18px;
+            alignment: start;
+            Caption { text: AppData.url; }
+            Section {
+                title: "MOVE TO CONTAINER";
+                Flickable {
+                    height: 44px;
+                    viewport-width: c1.preferred-width;
+                    c1 := HorizontalLayout {
+                        spacing: 6px;
+                        for c in AppData.containers: Pill { label: c.name; selected: c.selected; clicked => { Logic.move-tab(c.id); } }
+                    }
+                }
+            }
+            Section {
+                title: "TAB GROUP";
+                Flickable {
+                    height: 44px;
+                    viewport-width: c2.preferred-width;
+                    c2 := HorizontalLayout {
+                        spacing: 6px;
+                        Pill { label: "None"; clicked => { Logic.set-tab-group(0); } }
+                        for g in AppData.groups: Pill { label: g.name; selected: g.selected; clicked => { Logic.set-tab-group(g.id); } }
+                    }
+                }
+                Field { placeholder: "New group name — press Enter"; accepted(t) => { Logic.new-group(t); } }
+            }
+            Section {
+                title: "ALWAYS OPEN " + AppData.host + " IN";
+                Flickable {
+                    height: 44px;
+                    viewport-width: c3.preferred-width;
+                    c3 := HorizontalLayout {
+                        spacing: 6px;
+                        for c in AppData.containers: Pill { label: c.name; clicked => { Logic.set-rule(c.id); } }
+                        if AppData.has-rule: Pill { label: "Remove rule"; danger: true; clicked => { Logic.remove-rule(AppData.host); } }
+                    }
+                }
+            }
+            Section {
+                title: "BOOKMARK IN FOLDER";
+                Flickable {
+                    height: 44px;
+                    viewport-width: c4.preferred-width;
+                    c4 := HorizontalLayout {
+                        spacing: 6px;
+                        Pill { label: "Bookmarks"; clicked => { Logic.bookmark-in(0); } }
+                        for f in AppData.folders: Pill { label: f.name; clicked => { Logic.bookmark-in(f.id); } }
+                    }
+                }
+            }
+        }
+    }
+}
