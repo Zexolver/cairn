@@ -303,7 +303,18 @@ impl SoftwareRenderingContext {
         }
         let connection = connection?;
         let adapter = connection.create_hardware_adapter()?;
-        SurfmanRenderingContext::new(&connection, &adapter, None)
+        match SurfmanRenderingContext::new(&connection, &adapter, None) {
+            Ok(c) => Ok(c),
+            Err(e) => {
+                log::warn!("cairn: desktop GL failed ({e:?}), trying GLES");
+                surfman::mesa_surfaceless::set_use_gles(true);
+                let r = SurfmanRenderingContext::new(&connection, &adapter, None);
+                if r.is_err() {
+                    surfman::mesa_surfaceless::set_use_gles(false);
+                }
+                r
+            }
+        }
     }
 
     pub fn new(size: PhysicalSize<u32>) -> Result<Self, Error> {
