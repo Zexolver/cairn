@@ -245,6 +245,10 @@ fn opt(id: i32) -> Option<u32> {
 fn main() -> Result<(), slint::PlatformError> {
     #[cfg(feature = "servo")]
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
+    if std::env::var_os("SLINT_BACKEND").is_none() {
+        // FemtoVG's EGL surface breaks once Servo initialises GL ("bad surface" swap error); the page is a CPU image anyway.
+        unsafe { std::env::set_var("SLINT_BACKEND", "winit-software") };
+    }
     let ui = MainWindow::new()?;
     let data_dir = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn"));
     let blocker = Rc::new(Blocker::new());
