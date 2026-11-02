@@ -238,11 +238,21 @@ fn refresh(ui: &MainWindow, st: &mut State) {
     d.set_folder_path(path.into());
 }
 
+pub static PAINT_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PAINT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static FRAME_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static PUMP_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn paint(ui: &MainWindow, st: &mut State) {
+    use std::sync::atomic::Ordering::Relaxed;
     let (Some(tab), Some(c)) = (st.ws.active, st.active_container()) else { return };
+    let t0 = std::time::Instant::now();
     if let Some(f) = st.engine_for(c).frame(tab) {
+        FRAME_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
         let buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&f.rgba, f.width, f.height);
         ui.global::<AppData>().set_frame(Image::from_rgba8(buf));
+        PAINT_N.fetch_add(1, Relaxed);
+        PAINT_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
     }
 }
 
@@ -524,7 +534,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut lib_dirty = false;
             let ids: Vec<u32> = s.engines.keys().copied().collect();
             for c in ids {
-                for ev in s.engines.get_mut(&c).unwrap().pump() {
+                let tp = std::time::Instant::now();
+                let evs = s.engines.get_mut(&c).unwrap().pump();
+                PUMP_US.fetch_add(tp.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+                for ev in evs {
                     changed = true;
                     match ev {
                         Event::Title(t, v) => {
@@ -593,14 +606,21 @@ fn main() -> Result<(), slint::PlatformError> {
             let url = s.ws.active.and_then(|a| s.ws.tabs.iter().find(|t| t.id == a)).map(|t| t.url.clone()).unwrap_or_default();
             let note = if url != last_url { format!(" url={url}") } else { String::new() };
             last_url = url;
+            use std::sync::atomic::Ordering::Relaxed;
+            let pn = PAINT_N.swap(0, Relaxed).max(1);
+            let (pu, fu, mu) = (PAINT_US.swap(0, Relaxed), FRAME_US.swap(0, Relaxed), PUMP_US.swap(0, Relaxed));
             let line = format!(
-                "[{:>5}s] rss={}MB anon={}MB threads={} tabs={} engines={}{note}",
+                "[{:>5}s] rss={}MB anon={}MB threads={} tabs={} engines={} paints/5s={} paint={}ms(read={}ms) pump={}ms/5s{note}",
                 t0.elapsed().as_secs(),
                 kb("VmRSS").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
                 kb("RssAnon").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
                 kb("Threads"),
                 s.ws.tabs.len(),
-                s.engines.len()
+                s.engines.len(),
+                if pu == 0 { 0 } else { pn },
+                pu / 1000 / pn,
+                fu / 1000 / pn,
+                mu / 1000
             );
             drop(s);
             if bench.is_some() {
