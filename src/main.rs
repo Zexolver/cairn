@@ -241,6 +241,7 @@ fn refresh(ui: &MainWindow, st: &mut State) {
 pub static PAINT_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PAINT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static FRAME_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static SERVO_PAINT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PUMP_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn paint(ui: &MainWindow, st: &mut State) {
@@ -608,9 +609,10 @@ fn main() -> Result<(), slint::PlatformError> {
             last_url = url;
             use std::sync::atomic::Ordering::Relaxed;
             let pn = PAINT_N.swap(0, Relaxed).max(1);
+            let sp = SERVO_PAINT_US.swap(0, Relaxed);
             let (pu, fu, mu) = (PAINT_US.swap(0, Relaxed), FRAME_US.swap(0, Relaxed), PUMP_US.swap(0, Relaxed));
             let line = format!(
-                "[{:>5}s] rss={}MB anon={}MB threads={} tabs={} engines={} paints/5s={} paint={}ms(read={}ms) pump={}ms/5s{note}",
+                "[{:>5}s] rss={}MB anon={}MB threads={} tabs={} engines={} paints/5s={} paint={}ms(servo_paint={}ms read={}ms) pump={}ms/5s{note}",
                 t0.elapsed().as_secs(),
                 kb("VmRSS").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
                 kb("RssAnon").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
@@ -619,7 +621,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 s.engines.len(),
                 if pu == 0 { 0 } else { pn },
                 pu / 1000 / pn,
-                fu / 1000 / pn,
+                sp / 1000 / pn,
+                fu.saturating_sub(sp) / 1000 / pn,
                 mu / 1000
             );
             drop(s);

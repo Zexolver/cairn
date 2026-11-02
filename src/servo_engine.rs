@@ -229,7 +229,9 @@ impl Engine for ServoEngine {
     fn frame(&mut self, tab: TabId) -> Option<Frame> {
         self.show_only(tab);
         let wv = self.tabs.get(&tab)?;
+        let t0 = std::time::Instant::now();
         wv.paint();
+        crate::SERVO_PAINT_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
         let (w, h) = self.size.get();
         let img = self.ctx.read_to_image(DeviceIntRect::from_size(euclid::Size2D::new(w as i32, h as i32)))?;
         self.dirty = false;
