@@ -62,3 +62,4 @@ path = "src/main.rs"
 
 [patch.crates-io]
 servo-script = { path = "vendor/servo-script" }
+servo-paint-api = { path = "vendor/servo-paint-api" }

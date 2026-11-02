@@ -109,6 +109,14 @@ fn color(hex: &str) -> slint::Color {
     slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
+pub fn log_line(msg: &str) {
+    use std::io::Write;
+    let path = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn")).join("cairn.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{msg}");
+    }
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }

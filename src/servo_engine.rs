@@ -80,6 +80,10 @@ impl ServoEngine {
         let opts = Opts { config_dir: Some(profile_dir.to_path_buf()), ..Opts::default() };
         let servo = ServoBuilder::default().opts(opts).preferences(prefs).event_loop_waker(Box::new(NoWake)).build();
         let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(vp.0.max(1), vp.1.max(1))).expect("rendering context"));
+        let _ = ctx.make_current();
+        let renderer = ctx.gleam_gl_api().get_string(0x1F01);
+        eprintln!("cairn: GL renderer = {renderer}");
+        crate::log_line(&format!("GL renderer = {renderer}"));
         let ucm = Rc::new(servo::UserContentManager::new(&servo));
         ucm.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
         Self { servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
