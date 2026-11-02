@@ -568,12 +568,40 @@ fn main() -> Result<(), slint::PlatformError> {
     // CAIRN_BENCH=<secs>: print RSS every 5s and quit (for RAM comparisons)
     let bench = std::env::var("CAIRN_BENCH").ok().and_then(|s| s.parse::<u64>().ok());
     let t0 = std::time::Instant::now();
+    let log_path = st.borrow().data_dir.join("cairn.log");
+    if std::fs::metadata(&log_path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = std::fs::remove_file(&log_path);
+    }
+    eprintln!("cairn: logging to {}", log_path.display());
     let bench_timer = slint::Timer::default();
-    if let Some(limit) = bench {
+    {
+        let st = st.clone();
+        let mut last_url = String::new();
         bench_timer.start(slint::TimerMode::Repeated, Duration::from_secs(5), move || {
-            let rss: String = std::fs::read_to_string("/proc/self/status").unwrap_or_default().lines().filter(|l| l.starts_with("VmRSS") || l.starts_with("RssAnon")).collect::<Vec<_>>().join(" ");
-            eprintln!("[{:>4}s] {rss}", t0.elapsed().as_secs());
-            if t0.elapsed().as_secs() >= limit {
+            use std::io::Write;
+            let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+            let kb = |k: &str| status.lines().find(|l| l.starts_with(k)).and_then(|l| l.split_whitespace().nth(1)).unwrap_or("?").to_string();
+            let s = st.borrow();
+            let url = s.ws.active.and_then(|a| s.ws.tabs.iter().find(|t| t.id == a)).map(|t| t.url.clone()).unwrap_or_default();
+            let note = if url != last_url { format!(" url={url}") } else { String::new() };
+            last_url = url;
+            let line = format!(
+                "[{:>5}s] rss={}MB anon={}MB threads={} tabs={} engines={}{note}",
+                t0.elapsed().as_secs(),
+                kb("VmRSS").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
+                kb("RssAnon").parse::<u64>().map(|v| v / 1024).unwrap_or(0),
+                kb("Threads"),
+                s.ws.tabs.len(),
+                s.engines.len()
+            );
+            drop(s);
+            if bench.is_some() {
+                eprintln!("{line}");
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                let _ = writeln!(f, "{line}");
+            }
+            if bench.is_some_and(|l| t0.elapsed().as_secs() >= l) {
                 let _ = slint::quit_event_loop();
             }
         });
