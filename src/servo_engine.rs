@@ -71,6 +71,7 @@ pub struct ServoEngine {
     size: Rc<std::cell::Cell<(u32, u32)>>,
     cursor: (f32, f32),
     dirty: bool,
+    scale: f32,
 }
 
 impl ServoEngine {
@@ -86,7 +87,10 @@ impl ServoEngine {
         crate::log_line(&format!("GL renderer = {renderer}"));
         let ucm = Rc::new(servo::UserContentManager::new(&servo));
         ucm.add_script(Rc::new(servo::UserScript::new(CRYPTO_POLYFILL.to_string(), None)));
-        Self { servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
+        let scale = std::env::var("CAIRN_RENDER_SCALE").ok().and_then(|s| s.parse::<f32>().ok()).map_or(1.0, |s| s.clamp(0.25, 1.0));
+        crate::log_line(&format!("render scale = {scale}"));
+        let vp = ((vp.0 as f32 * scale).max(1.0) as u32, (vp.1 as f32 * scale).max(1.0) as u32);
+        Self { scale, servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
     }
 
     fn show_only(&mut self, tab: TabId) {
@@ -127,6 +131,7 @@ impl Engine for ServoEngine {
             .url(parse(url))
             .delegate(delegate)
             .build();
+        wv.set_hidpi_scale_factor(euclid::Scale::new(self.scale));
         let (w, h) = self.size.get();
         wv.resize(dpi::PhysicalSize::new(w, h));
         self.tabs.insert(tab, wv);
@@ -164,6 +169,7 @@ impl Engine for ServoEngine {
         }
     }
     fn resize(&mut self, width: u32, height: u32) {
+        let (width, height) = ((width as f32 * self.scale).max(1.0) as u32, (height as f32 * self.scale).max(1.0) as u32);
         self.size.set((width, height));
         for wv in self.tabs.values() {
             wv.resize(dpi::PhysicalSize::new(width, height));
@@ -173,10 +179,11 @@ impl Engine for ServoEngine {
     fn input(&mut self, tab: TabId, input: Input) {
         self.show_only(tab);
         let Some(wv) = self.tabs.get(&tab) else { return };
-        let pt = |x: f32, y: f32| servo::DevicePoint::new(x, y);
+        let sc = self.scale;
+        let pt = |x: f32, y: f32| servo::DevicePoint::new(x * sc, y * sc);
         match input {
             Input::Move(x, y) => {
-                self.cursor = (x, y);
+                self.cursor = (x * sc, y * sc);
                 wv.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(pt(x, y).into())));
             }
             Input::Down(x, y, b) | Input::Up(x, y, b) => {
