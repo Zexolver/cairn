@@ -262,6 +262,24 @@ fn opt(id: i32) -> Option<u32> {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    match std::env::args().nth(1).as_deref() {
+        Some("--version" | "-V") => {
+            println!("cairn {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--help" | "-h") => {
+            println!(
+                "cairn {} - lightweight web browser\n\nUsage: cairn [--help | --version]\n\nEnvironment:\n  CAIRN_URL=<url>            open this page at start\n  CAIRN_DATA=<dir>           data directory (default: /tmp/cairn)\n  CAIRN_RENDER_SCALE=<0.25-1> render pages at a fraction of window size\n  CAIRN_GPU=0                force software page rendering\n  CAIRN_MEMREPORT=<secs>     write a memory breakdown to cairn.log after <secs>\n  CAIRN_BENCH=<secs>         print stats every 5 s and quit after <secs>",
+                env!("CARGO_PKG_VERSION")
+            );
+            return Ok(());
+        }
+        Some(a) if a.starts_with('-') => {
+            eprintln!("cairn: unknown option {a} (try --help)");
+            std::process::exit(2);
+        }
+        _ => {}
+    }
     #[cfg(feature = "servo")]
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
     if std::env::var_os("SLINT_BACKEND").is_none() {
