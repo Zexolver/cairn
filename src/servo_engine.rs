@@ -72,6 +72,8 @@ pub struct ServoEngine {
     cursor: (f32, f32),
     dirty: bool,
     scale: f32,
+    started: std::time::Instant,
+    memreport_at: Option<u64>,
 }
 
 impl ServoEngine {
@@ -90,7 +92,7 @@ impl ServoEngine {
         let scale = std::env::var("CAIRN_RENDER_SCALE").ok().and_then(|s| s.parse::<f32>().ok()).map_or(1.0, |s| s.clamp(0.25, 1.0));
         crate::log_line(&format!("render scale = {scale}"));
         let vp = ((vp.0 as f32 * scale).max(1.0) as u32, (vp.1 as f32 * scale).max(1.0) as u32);
-        Self { scale, servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
+        Self { started: std::time::Instant::now(), memreport_at: std::env::var("CAIRN_MEMREPORT").ok().and_then(|s| s.parse().ok()), scale, servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
     }
 
     fn show_only(&mut self, tab: TabId) {
@@ -231,6 +233,23 @@ impl Engine for ServoEngine {
     }
     fn pump(&mut self) -> Vec<Event> {
         self.servo.spin_event_loop();
+        // CAIRN_MEMREPORT=<secs>: write Servo's own memory breakdown to cairn.log once, after <secs>
+        if let Some(at) = self.memreport_at {
+            if self.started.elapsed().as_secs() >= at {
+                self.memreport_at = None;
+                if let Ok(cb) = servo_base::generic_channel::GenericCallback::new(|r: Result<servo::profile_traits::mem::MemoryReportResult, _>| {
+                    let Ok(r) = r else { return };
+                    let mut rows: Vec<(usize, String)> = r.results.iter().flat_map(|p| p.reports.iter()).map(|x| (x.size, x.path.join("/"))).collect();
+                    rows.sort_by(|a, b| b.0.cmp(&a.0));
+                    crate::log_line("memory report (MB):");
+                    for (size, path) in rows.iter().filter(|x| x.0 >= 512 * 1024) {
+                        crate::log_line(&format!("  {:>7.1}  {path}", *size as f64 / 1048576.0));
+                    }
+                }) {
+                    self.servo.create_memory_report(cb);
+                }
+            }
+        }
         std::mem::take(&mut *self.queue.borrow_mut())
     }
     fn frame(&mut self, tab: TabId) -> Option<Frame> {
