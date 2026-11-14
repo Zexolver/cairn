@@ -34,6 +34,10 @@ url = { version = "2", optional = true }
 winit = { version = "0.30", optional = true }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
+wayland-client = "0.31"
+
 [build-dependencies]
 slint-build = "1.17"
 

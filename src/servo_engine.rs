@@ -73,11 +73,15 @@ pub struct ServoEngine {
     dirty: bool,
     scale: f32,
     started: std::time::Instant,
+    #[cfg(target_os = "linux")]
+    export: Option<std::sync::Arc<crate::zerocopy::DmabufFrame>>,
     memreport_at: Option<u64>,
 }
 
 impl ServoEngine {
     pub fn new(profile_dir: &Path, vp: (u32, u32)) -> Self {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         let _ = std::fs::create_dir_all(profile_dir);
         let prefs = servo::Preferences { dom_intersection_observer_enabled: true, dom_visual_viewport_enabled: true, dom_indexeddb_enabled: true, ..Default::default() };
         let opts = Opts { config_dir: Some(profile_dir.to_path_buf()), ..Opts::default() };
@@ -92,7 +96,7 @@ impl ServoEngine {
         let scale = std::env::var("CAIRN_RENDER_SCALE").ok().and_then(|s| s.parse::<f32>().ok()).map_or(1.0, |s| s.clamp(0.25, 1.0));
         crate::log_line(&format!("render scale = {scale}"));
         let vp = ((vp.0 as f32 * scale).max(1.0) as u32, (vp.1 as f32 * scale).max(1.0) as u32);
-        Self { started: std::time::Instant::now(), memreport_at: std::env::var("CAIRN_MEMREPORT").ok().and_then(|s| s.parse().ok()), scale, servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
+        Self { #[cfg(target_os = "linux")] export: None, started: std::time::Instant::now(), memreport_at: std::env::var("CAIRN_MEMREPORT").ok().and_then(|s| s.parse().ok()), scale, servo, ctx, ucm, tabs: HashMap::new(), shown: None, queue: Rc::default(), size: Rc::new(std::cell::Cell::new(vp)), cursor: (0.0, 0.0), dirty: true }
     }
 
     fn show_only(&mut self, tab: TabId) {
@@ -127,6 +131,10 @@ fn parse(url: &str) -> url::Url {
 
 impl Engine for ServoEngine {
     fn open(&mut self, tab: TabId, url: &str) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        let _ = self.ctx.make_current();
         let delegate = Rc::new(Delegate { tab, queue: self.queue.clone(), size: self.size.clone() });
         let wv = WebViewBuilder::new(&self.servo, self.ctx.clone())
             .user_content_manager(self.ucm.clone())
@@ -141,17 +149,25 @@ impl Engine for ServoEngine {
         self.show_only(tab);
     }
     fn close(&mut self, tab: TabId) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        let _ = self.ctx.make_current();
         self.tabs.remove(&tab);
         if self.shown == Some(tab) {
             self.shown = None;
         }
     }
     fn navigate(&mut self, tab: TabId, url: &str) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         if let Some(wv) = self.tabs.get(&tab) {
             wv.load(parse(url));
         }
     }
     fn back(&mut self, tab: TabId) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         if let Some(wv) = self.tabs.get(&tab) {
             if wv.can_go_back() {
                 wv.go_back(1);
@@ -159,6 +175,8 @@ impl Engine for ServoEngine {
         }
     }
     fn forward(&mut self, tab: TabId) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         if let Some(wv) = self.tabs.get(&tab) {
             if wv.can_go_forward() {
                 wv.go_forward(1);
@@ -166,12 +184,24 @@ impl Engine for ServoEngine {
         }
     }
     fn reload(&mut self, tab: TabId) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         if let Some(wv) = self.tabs.get(&tab) {
             wv.reload();
         }
     }
     fn resize(&mut self, width: u32, height: u32) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        let _ = self.ctx.make_current();
         let (width, height) = ((width as f32 * self.scale).max(1.0) as u32, (height as f32 * self.scale).max(1.0) as u32);
+        if self.size.get() != (width, height) {
+            #[cfg(target_os = "linux")]
+            {
+                self.export = None;
+            }
+        }
         self.size.set((width, height));
         for wv in self.tabs.values() {
             wv.resize(dpi::PhysicalSize::new(width, height));
@@ -179,6 +209,8 @@ impl Engine for ServoEngine {
         self.dirty = true;
     }
     fn input(&mut self, tab: TabId, input: Input) {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
         self.show_only(tab);
         let Some(wv) = self.tabs.get(&tab) else { return };
         let sc = self.scale;
@@ -232,6 +264,10 @@ impl Engine for ServoEngine {
         }
     }
     fn pump(&mut self) -> Vec<Event> {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        let _ = self.ctx.make_current();
         self.servo.spin_event_loop();
         // CAIRN_MEMREPORT=<secs>: write Servo's own memory breakdown to cairn.log once, after <secs>
         if let Some(at) = self.memreport_at {
@@ -253,6 +289,10 @@ impl Engine for ServoEngine {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
     fn frame(&mut self, tab: TabId) -> Option<Frame> {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        let _ = self.ctx.make_current();
         self.show_only(tab);
         let wv = self.tabs.get(&tab)?;
         let t0 = std::time::Instant::now();
@@ -262,5 +302,44 @@ impl Engine for ServoEngine {
         let img = self.ctx.read_to_image(DeviceIntRect::from_size(euclid::Size2D::new(w as i32, h as i32)))?;
         self.dirty = false;
         Some(Frame { width: img.width(), height: img.height(), rgba: img.into_raw() })
+    }
+    #[cfg(target_os = "linux")]
+    fn frame_gpu(&mut self, tab: TabId) -> Option<std::sync::Arc<crate::zerocopy::DmabufFrame>> {
+        #[cfg(target_os = "linux")]
+        let _ui_context = crate::zerocopy::CurrentGuard::save();
+        // The UI may have made its own GL context current since the last call; Servo assumes its context stays current.
+        if let Err(e) = self.ctx.make_current() {
+            crate::log_line(&format!("zero-copy: make_current failed: {e:?}"));
+        }
+        self.show_only(tab);
+        let wv = self.tabs.get(&tab)?;
+        let t0 = std::time::Instant::now();
+        wv.paint();
+        crate::SERVO_PAINT_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+        let gl = self.ctx.gleam_gl_api();
+        if self.export.is_none() {
+            self.ctx.make_current().ok()?;
+            self.ctx.prepare_for_rendering();
+            // colour attachment of the surface's framebuffer: must be a texture to be exportable
+            let (kind, name) = (
+                gl.get_framebuffer_attachment_parameter_iv(0x8D40, 0x8CE0, 0x8CD0),
+                gl.get_framebuffer_attachment_parameter_iv(0x8D40, 0x8CE0, 0x8CD1),
+            );
+            if kind != 0x1702 || name <= 0 {
+                crate::log_line(&format!("zero-copy: render target is not a texture (type={kind:#x})"));
+                return None;
+            }
+            let (w, h) = self.size.get();
+            match crate::zerocopy::export_texture(name as u32, w, h) {
+                Ok(f) => self.export = Some(std::sync::Arc::new(f)),
+                Err(e) => {
+                    crate::log_line(&format!("zero-copy: {e}"));
+                    return None;
+                }
+            }
+        }
+        gl.flush();
+        self.dirty = false;
+        self.export.clone()
     }
 }

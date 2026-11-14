@@ -1013,6 +1013,7 @@ dependencies = [
  "cairn-core",
  "dpi",
  "euclid",
+ "libloading 0.8.9",
  "lz4_flex",
  "png 0.17.16",
  "rustls",
@@ -1022,6 +1023,7 @@ dependencies = [
  "slint",
  "slint-build",
  "url",
+ "wayland-client",
  "winit",
  "zstd 0.13.3",
 ]

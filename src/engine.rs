@@ -35,6 +35,11 @@ pub trait Engine {
     /// Drive the engine; returns state changes since the last call.
     fn pump(&mut self) -> Vec<Event>;
     fn frame(&mut self, tab: TabId) -> Option<Frame>;
+    /// Paint and hand out the GPU render target itself (no CPU copy). `None` = not supported, use `frame`.
+    #[cfg(target_os = "linux")]
+    fn frame_gpu(&mut self, _tab: TabId) -> Option<std::sync::Arc<crate::zerocopy::DmabufFrame>> {
+        None
+    }
 }
 
 /// Placeholder engine used when built without the `servo` feature.

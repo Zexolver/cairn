@@ -237,6 +237,11 @@ impl Device {
     /// After calling this function, it is valid to use OpenGL rendering commands.
     #[inline]
     pub fn make_context_current(&self, context: &Context) -> Result<(), Error> {
+        // cairn: the UI toolkit may have bound a different client API (GLES) on this thread;
+        // eglMakeCurrent acts on the bound API, so rebind ours first.
+        crate::base::egl::device::EGL_FUNCTIONS.with(|egl| unsafe {
+            egl.BindAPI(if super::use_gles() { egl::OPENGL_ES_API } else { egl::OPENGL_API });
+        });
         unsafe { context.0.make_current(self.native_connection.egl_display) }
     }
 

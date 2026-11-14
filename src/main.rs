@@ -1,4 +1,6 @@
 mod engine;
+#[cfg(target_os = "linux")]
+mod zerocopy;
 #[cfg(feature = "servo")]
 mod servo_engine;
 
@@ -27,7 +29,13 @@ struct State {
     folder_cwd: Option<u32>,
     history_query: String,
     data_dir: PathBuf,
+    /// Zero-copy GPU frames: Some(slot) while enabled; the slot carries the frame to the render callback.
+    #[cfg(target_os = "linux")]
+    gpu: Option<GpuSlot>,
 }
+
+#[cfg(target_os = "linux")]
+type GpuSlot = Rc<RefCell<Option<std::sync::Arc<zerocopy::DmabufFrame>>>>;
 
 impl State {
     fn engine_for(&mut self, container: u32) -> &mut Box<dyn Engine> {
@@ -248,12 +256,83 @@ fn paint(ui: &MainWindow, st: &mut State) {
     use std::sync::atomic::Ordering::Relaxed;
     let (Some(tab), Some(c)) = (st.ws.active, st.active_container()) else { return };
     let t0 = std::time::Instant::now();
+    #[cfg(target_os = "linux")]
+    if let Some(slot) = st.gpu.clone() {
+        if let Some(f) = st.engine_for(c).frame_gpu(tab) {
+            *slot.borrow_mut() = Some(f);
+            ui.window().request_redraw();
+            FRAME_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
+            PAINT_N.fetch_add(1, Relaxed);
+            PAINT_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
+            return;
+        }
+        log_line("zero-copy: disabled, falling back to CPU frames");
+        st.gpu = None;
+    }
     if let Some(f) = st.engine_for(c).frame(tab) {
         FRAME_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
         let buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&f.rgba, f.width, f.height);
         ui.global::<AppData>().set_frame(Image::from_rgba8(buf));
         PAINT_N.fetch_add(1, Relaxed);
         PAINT_US.fetch_add(t0.elapsed().as_micros() as u64, Relaxed);
+    }
+}
+
+/// Install the render callback that imports Servo's render target as a texture in the UI's GL context.
+#[cfg(target_os = "linux")]
+fn setup_zero_copy(ui: &MainWindow) -> Option<GpuSlot> {
+    let slot: GpuSlot = Rc::default();
+    let (weak, slot2) = (ui.as_weak(), slot.clone());
+    let mut importer: Option<zerocopy::Importer> = None;
+    let forced = std::env::var("CAIRN_ZEROCOPY").as_deref() == Ok("1");
+    let res = ui.window().set_rendering_notifier(move |state, api| {
+        let slint::GraphicsAPI::NativeOpenGL { get_proc_address } = api else { return };
+        match state {
+            slint::RenderingState::RenderingSetup => {
+                importer = zerocopy::Importer::new(get_proc_address);
+                match &importer {
+                    Some(i) => log_line(&format!("UI GL renderer = {}", i.renderer)),
+                    None => log_line("zero-copy: UI GL context lacks EGL image import"),
+                }
+                if importer.as_ref().is_some_and(|i| i.is_software()) && !forced {
+                    log_line("zero-copy: UI renderer is software, not using it");
+                    importer = None;
+                }
+            }
+            slint::RenderingState::BeforeRendering => {
+                let Some(frame) = slot2.borrow_mut().take() else { return };
+                let (Some(imp), Some(ui)) = (importer.as_mut(), weak.upgrade()) else { return };
+                if imp.id == frame.id {
+                    return;
+                }
+                match imp.import(&frame) {
+                    Ok((tex, old)) => {
+                        let img = unsafe {
+                            slint::BorrowedOpenGLTextureBuilder::new_gl_2d_rgba_texture(std::num::NonZeroU32::new(tex).unwrap(), (frame.width, frame.height).into())
+                                .origin(slint::BorrowedOpenGLTextureOrigin::BottomLeft)
+                                .build()
+                        };
+                        ui.global::<AppData>().set_frame(img);
+                        imp.release(old);
+                            log_line(&format!("zero-copy: showing {}x{} texture (fourcc={:#x} modifier={:#x})", frame.width, frame.height, frame.fourcc, frame.modifier));
+                    }
+                    Err(e) => log_line(&format!("zero-copy: {e}")),
+                }
+            }
+            slint::RenderingState::RenderingTeardown => {
+                if let Some(i) = importer.as_mut() {
+                    i.teardown();
+                }
+            }
+            _ => {}
+        }
+    });
+    match res {
+        Ok(()) => Some(slot),
+        Err(e) => {
+            log_line(&format!("zero-copy: no render callback ({e:?})"));
+            None
+        }
     }
 }
 
@@ -269,7 +348,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         Some("--help" | "-h") => {
             println!(
-                "cairn {} - lightweight web browser\n\nUsage: cairn [--help | --version]\n\nEnvironment:\n  CAIRN_URL=<url>            open this page at start\n  CAIRN_DATA=<dir>           data directory (default: /tmp/cairn)\n  CAIRN_RENDER_SCALE=<0.25-1> render pages at a fraction of window size\n  CAIRN_GPU=0                force software page rendering\n  CAIRN_MEMREPORT=<secs>     write a memory breakdown to cairn.log after <secs>\n  CAIRN_BENCH=<secs>         print stats every 5 s and quit after <secs>",
+                "cairn {} - lightweight web browser\n\nUsage: cairn [--help | --version]\n\nEnvironment:\n  CAIRN_URL=<url>            open this page at start\n  CAIRN_DATA=<dir>           data directory (default: /tmp/cairn)\n  CAIRN_RENDER_SCALE=<0.25-1> render pages at a fraction of window size\n  CAIRN_GPU=0                force software page rendering\n  CAIRN_ZEROCOPY=0|1         page frames straight from GPU to window (default: auto)\n  CAIRN_MEMREPORT=<secs>     write a memory breakdown to cairn.log after <secs>\n  CAIRN_BENCH=<secs>         print stats every 5 s and quit after <secs>",
                 env!("CARGO_PKG_VERSION")
             );
             return Ok(());
@@ -282,11 +361,25 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     #[cfg(feature = "servo")]
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
+    // Zero-copy page frames need the UI on the GPU: on when the compositor shares GPU buffers (CAIRN_ZEROCOPY=0/1 overrides).
+    #[cfg(target_os = "linux")]
+    let zero_copy = cfg!(feature = "servo")
+        && std::env::var_os("SLINT_BACKEND").is_none()
+        && match std::env::var("CAIRN_ZEROCOPY").as_deref() {
+            Ok("1") => true,
+            Ok(_) => false,
+            Err(_) => std::env::var_os("WAYLAND_DISPLAY").is_some() && zerocopy::wayland_has_dmabuf(),
+        };
+    #[cfg(not(target_os = "linux"))]
+    let zero_copy = false;
     if std::env::var_os("SLINT_BACKEND").is_none() {
-        // FemtoVG's EGL surface breaks once Servo initialises GL ("bad surface" swap error); the page is a CPU image anyway.
-        unsafe { std::env::set_var("SLINT_BACKEND", "winit-software") };
+        // Otherwise the page is a CPU image and the software renderer is the lightest way to show it.
+        unsafe { std::env::set_var("SLINT_BACKEND", if zero_copy { "winit-femtovg" } else { "winit-software" }) };
     }
     let ui = MainWindow::new()?;
+    #[cfg(target_os = "linux")]
+    let gpu_slot: Option<GpuSlot> = zero_copy.then(|| setup_zero_copy(&ui)).flatten();
+    log_line(&format!("frames = {}", if cfg!(target_os = "linux") && zero_copy { "zero-copy requested" } else { "cpu readback" }));
     let data_dir = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn"));
     let blocker = Rc::new(Blocker::new());
     blocker.load_lists(lists::load_cached(&data_dir.join("lists")));
@@ -300,6 +393,8 @@ fn main() -> Result<(), slint::PlatformError> {
         selected_container: 0,
         engines: HashMap::new(),
         viewport: (800, 600),
+        #[cfg(target_os = "linux")]
+        gpu: gpu_slot,
         blocked: 0,
         settings,
         library,
