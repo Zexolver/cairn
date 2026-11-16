@@ -3,7 +3,7 @@ members = ["crates/cairn-core", "."]
 
 [package]
 name = "cairn"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MPL-2.0"
 description = "Lightweight cross-platform browser: Slint UI, Servo engine, container-per-process tabs"

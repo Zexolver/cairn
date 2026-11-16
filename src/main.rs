@@ -120,6 +120,9 @@ fn color(hex: &str) -> slint::Color {
 pub fn log_line(msg: &str) {
     use std::io::Write;
     let path = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn")).join("cairn.log");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{msg}");
     }
@@ -246,6 +249,9 @@ fn refresh(ui: &MainWindow, st: &mut State) {
     d.set_folder_path(path.into());
 }
 
+/// Set by the render callback when the UI's GL context can't take Servo's texture; `paint` then falls back to CPU frames.
+#[cfg(target_os = "linux")]
+static ZERO_COPY_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub static PAINT_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PAINT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static FRAME_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -256,6 +262,10 @@ fn paint(ui: &MainWindow, st: &mut State) {
     use std::sync::atomic::Ordering::Relaxed;
     let (Some(tab), Some(c)) = (st.ws.active, st.active_container()) else { return };
     let t0 = std::time::Instant::now();
+    #[cfg(target_os = "linux")]
+    if ZERO_COPY_OFF.load(Relaxed) && st.gpu.take().is_some() {
+        log_line("zero-copy: off, using CPU frames");
+    }
     #[cfg(target_os = "linux")]
     if let Some(slot) = st.gpu.clone() {
         if let Some(f) = st.engine_for(c).frame_gpu(tab) {
@@ -298,6 +308,9 @@ fn setup_zero_copy(ui: &MainWindow) -> Option<GpuSlot> {
                     log_line("zero-copy: UI renderer is software, not using it");
                     importer = None;
                 }
+                if importer.is_none() {
+                    ZERO_COPY_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             slint::RenderingState::BeforeRendering => {
                 let Some(frame) = slot2.borrow_mut().take() else { return };
@@ -316,7 +329,10 @@ fn setup_zero_copy(ui: &MainWindow) -> Option<GpuSlot> {
                         imp.release(old);
                             log_line(&format!("zero-copy: showing {}x{} texture (fourcc={:#x} modifier={:#x})", frame.width, frame.height, frame.fourcc, frame.modifier));
                     }
-                    Err(e) => log_line(&format!("zero-copy: {e}")),
+                    Err(e) => {
+                        log_line(&format!("zero-copy: {e}"));
+                        ZERO_COPY_OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
             slint::RenderingState::RenderingTeardown => {
@@ -379,7 +395,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     #[cfg(target_os = "linux")]
     let gpu_slot: Option<GpuSlot> = zero_copy.then(|| setup_zero_copy(&ui)).flatten();
-    log_line(&format!("frames = {}", if cfg!(target_os = "linux") && zero_copy { "zero-copy requested" } else { "cpu readback" }));
+    log_line(&format!("cairn {}: frames = {}", env!("CARGO_PKG_VERSION"), if cfg!(target_os = "linux") && zero_copy { "zero-copy requested (compositor offers GPU buffer sharing)" } else { "cpu readback (no GPU buffer sharing from the compositor, or turned off)" }));
     let data_dir = std::env::var_os("CAIRN_DATA").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("cairn"));
     let blocker = Rc::new(Blocker::new());
     blocker.load_lists(lists::load_cached(&data_dir.join("lists")));
