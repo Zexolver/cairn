@@ -258,6 +258,22 @@ pub static FRAME_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 pub static SERVO_PAINT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PUMP_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+static WAKE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    static TICK: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Run the engine pump + paint on the UI thread as soon as possible. Callable from any thread; calls are coalesced.
+pub fn request_tick() {
+    if !WAKE_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        let _ = slint::invoke_from_event_loop(|| {
+            if let Some(f) = TICK.with(|t| t.borrow().clone()) {
+                f();
+            }
+        });
+    }
+}
+
 fn paint(ui: &MainWindow, st: &mut State) {
     use std::sync::atomic::Ordering::Relaxed;
     let (Some(tab), Some(c)) = (st.ws.active, st.active_container()) else { return };
@@ -636,6 +652,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some((tab, c)) = s.ws.active.zip(s.active_container()) {
                     s.engine_for(c).input(tab, $inp);
                 }
+                drop(s);
+                request_tick();
             });
         }};
     }
@@ -656,9 +674,11 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let st = st.clone();
         let weak = ui.as_weak();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
-            let ui = weak.unwrap();
-            let mut s = st.borrow_mut();
+        let tick: Rc<dyn Fn()> = Rc::new(move || {
+            WAKE_PENDING.store(false, std::sync::atomic::Ordering::Release);
+            let Some(ui) = weak.upgrade() else { return };
+            // re-entered from inside a UI callback that already holds the state: the fallback timer picks it up
+            let Ok(mut s) = st.try_borrow_mut() else { return };
             let mut changed = false;
             let mut moves: Vec<(u32, u32)> = vec![];
             let mut lib_dirty = false;
@@ -715,6 +735,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 paint(&ui, &mut s);
             }
         });
+        TICK.with(|t| *t.borrow_mut() = Some(tick.clone()));
+        // The engine wakes us (request_tick) whenever it has work; this timer is only a safety net.
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), move || tick());
     }
     // CAIRN_BENCH=<secs>: print RSS every 5s and quit (for RAM comparisons)
     let bench = std::env::var("CAIRN_BENCH").ok().and_then(|s| s.parse::<u64>().ok());

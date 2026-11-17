@@ -14,7 +14,10 @@ impl EventLoopWaker for NoWake {
     fn clone_box(&self) -> Box<dyn EventLoopWaker> {
         Box::new(NoWake)
     }
-    fn wake(&self) {}
+    /// Called from Servo's threads when it has work for the embedder (new frame, load progress, ...).
+    fn wake(&self) {
+        crate::request_tick();
+    }
 }
 
 type Queue = Rc<RefCell<Vec<Event>>>;
